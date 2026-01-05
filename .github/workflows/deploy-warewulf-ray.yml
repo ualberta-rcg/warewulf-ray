@@ -1,0 +1,261 @@
+name: Build & Push Ray Warewulf Image
+
+on:
+  push:
+    branches:
+      - latest
+  workflow_dispatch:
+    inputs:
+      KERNEL_VERSION_OVERRIDE:
+        description: 'Specific kernel version (e.g., 6.8.0-31-generic). Use "0" for default kernel, "none" for no kernel installation.'
+        required: false
+        default: '0'
+      DISABLE_AUTOLOGIN:
+        description: 'Disable console autologin (1=Yes, 0=No).'
+        required: true
+        type: choice
+        options:
+          - '1' # True
+          - '0' # False
+        default: '0'
+      NVIDIA_INSTALL_ENABLED:
+        description: 'Enable NVIDIA driver installation (1=Yes, 0=No).'
+        required: true
+        type: choice
+        options:
+          - '1' # True
+          - '0' # False
+        default: '1'
+      NVIDIA_DRIVER_VERSION_OVERRIDE:
+        description: 'Specific NVIDIA driver version (e.g., 550.90.07). Use "0" for latest.'
+        required: false
+        default: '0'
+      FIRSTBOOT_ENABLED:
+        description: 'Enable firstboot Ansible service (1=Yes, 0=No).'
+        required: true
+        type: choice
+        options:
+          - '1' # True
+          - '0' # False
+        default: '1'
+  schedule:
+    - cron: '0 3 * * 1' # Every Monday at 3:00 AM UTC
+
+env:
+  TAG_NAME: ${{ github.ref_name }}
+
+jobs:
+  build-and-push:
+    name: Build & Push Ray WareWulf Image
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: 🛠️ Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Configure Build & Verify Dependencies
+        id: config
+        env:
+          # Pass ALL potential inputs and variables into the script's environment
+          INPUT_KERNEL_VERSION: ${{ github.event.inputs.KERNEL_VERSION_OVERRIDE }}
+          VAR_KERNEL_VERSION: ${{ vars.KERNEL_VERSION_OVERRIDE }}
+          
+          INPUT_DISABLE_AUTOLOGIN: ${{ github.event.inputs.DISABLE_AUTOLOGIN }}
+          VAR_DISABLE_AUTOLOGIN: ${{ vars.DISABLE_AUTOLOGIN }}
+
+          INPUT_NVIDIA_ENABLED: ${{ github.event.inputs.NVIDIA_INSTALL_ENABLED }}
+          VAR_NVIDIA_ENABLED: ${{ vars.NVIDIA_INSTALL_ENABLED }}
+
+          INPUT_NVIDIA_VERSION: ${{ github.event.inputs.NVIDIA_DRIVER_VERSION_OVERRIDE }}
+          VAR_NVIDIA_VERSION: ${{ vars.NVIDIA_DRIVER_VERSION_OVERRIDE }}
+
+          INPUT_FIRSTBOOT_ENABLED: ${{ github.event.inputs.FIRSTBOOT_ENABLED }}
+          VAR_FIRSTBOOT_ENABLED: ${{ vars.FIRSTBOOT_ENABLED }}
+        run: |
+          set -e # Exit on any error
+          
+          echo "--- Debugging Raw Input/Variable Values ---"
+          echo "INPUT_KERNEL_VERSION: '$INPUT_KERNEL_VERSION'"
+          echo "VAR_KERNEL_VERSION:   '$VAR_KERNEL_VERSION'"
+          echo "INPUT_FIRSTBOOT_ENABLED: '$INPUT_FIRSTBOOT_ENABLED'"
+          echo "VAR_FIRSTBOOT_ENABLED:   '$VAR_FIRSTBOOT_ENABLED'"
+          echo "-------------------------------------------"
+
+          lower() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
+
+          echo "## 1. Normalizing Autologin Option ##"
+          AUTOLOGIN_VAL="0"
+          if [ -n "$INPUT_DISABLE_AUTOLOGIN" ]; then AUTOLOGIN_VAL="$INPUT_DISABLE_AUTOLOGIN";
+          elif [ -n "$VAR_DISABLE_AUTOLOGIN" ]; then AUTOLOGIN_VAL="$VAR_DISABLE_AUTOLOGIN"; fi
+          if [ "$(lower "$AUTOLOGIN_VAL")" = "1" ] || [ "$(lower "$AUTOLOGIN_VAL")" = "true" ]; then
+            echo "DISABLE_AUTOLOGIN=true" >> $GITHUB_OUTPUT
+          else
+            echo "DISABLE_AUTOLOGIN=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "## 2. Normalizing Firstboot Option ##"
+          FIRSTBOOT_VAL="1"
+          if [ -n "$INPUT_FIRSTBOOT_ENABLED" ]; then FIRSTBOOT_VAL="$INPUT_FIRSTBOOT_ENABLED";
+          elif [ -n "$VAR_FIRSTBOOT_ENABLED" ]; then FIRSTBOOT_VAL="$VAR_FIRSTBOOT_ENABLED"; fi
+          if [ "$(lower "$FIRSTBOOT_VAL")" = "1" ] || [ "$(lower "$FIRSTBOOT_VAL")" = "true" ]; then
+            echo "FIRSTBOOT_ENABLED=true" >> $GITHUB_OUTPUT
+          else
+            echo "FIRSTBOOT_ENABLED=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo -e "\n## 3. Processing Kernel Configuration & Verifying Packages ##"
+          # Normalize Kernel Version Override
+          KERNEL_VERSION_OVERRIDE="0"
+          if [ -n "$INPUT_KERNEL_VERSION" ] && [ "$INPUT_KERNEL_VERSION" != "0" ]; then
+            KERNEL_VERSION_OVERRIDE="$INPUT_KERNEL_VERSION"
+          elif [ -n "$VAR_KERNEL_VERSION" ] && [ "$VAR_KERNEL_VERSION" != "0" ]; then
+            KERNEL_VERSION_OVERRIDE="$VAR_KERNEL_VERSION"
+          fi
+          
+          # Check if kernel installation should be enabled
+          if [ "$KERNEL_VERSION_OVERRIDE" = "none" ]; then
+            echo "🎯 Kernel installation DISABLED (no kernel option selected)"
+            echo "KERNEL_INSTALL_ENABLED=false" >> $GITHUB_OUTPUT
+            echo "KERNEL_VERSION=none" >> $GITHUB_OUTPUT
+          elif [ "$KERNEL_VERSION_OVERRIDE" != "0" ]; then
+            TARGET_KERNEL_VERSION="$KERNEL_VERSION_OVERRIDE"
+            echo "🎯 Target Kernel Version is specific: $TARGET_KERNEL_VERSION"
+            echo "🔎 Verifying kernel packages exist in Ubuntu 24.04 apt repository..."
+            sudo apt-get update -qq
+
+            IMAGE_PKG="linux-image-${TARGET_KERNEL_VERSION}"
+            HEADERS_PKG="linux-headers-${TARGET_KERNEL_VERSION}"
+
+            if ! apt-cache policy "$IMAGE_PKG" | grep -q "Candidate:"; then
+              echo "❌ ERROR: Kernel image package '$IMAGE_PKG' not found in apt repositories."
+              exit 1
+            fi
+            if ! apt-cache policy "$HEADERS_PKG" | grep -q "Candidate:"; then
+              echo "❌ ERROR: Kernel headers package '$HEADERS_PKG' not found in apt repositories."
+              exit 1
+            fi
+            echo "✅ Verified that '$IMAGE_PKG' and '$HEADERS_PKG' are available."
+            echo "KERNEL_INSTALL_ENABLED=true" >> $GITHUB_OUTPUT
+            echo "KERNEL_VERSION=${TARGET_KERNEL_VERSION}" >> $GITHUB_OUTPUT
+          else
+            echo "🎯 Target Kernel Version is latest available from apt (linux-image-generic)..."
+            sudo apt-get update -qq
+
+            GENERIC_VERSION=$(apt-cache policy linux-image-generic | grep Candidate | awk '{print $2}')
+            [ -z "$GENERIC_VERSION" ] && { echo "❌ ERROR: Could not find version of linux-image-generic."; exit 1; }
+
+            # Extract real kernel version from available modules (after a dry-run install)
+            KERNEL_PKG=$(apt-cache show "linux-image-generic=$GENERIC_VERSION" \
+              | grep -E '^Depends:' \
+              | sed -E 's/.*linux-image-([0-9]+\.[0-9]+\.[0-9]+-[0-9]+-generic).*/\1/' \
+              | head -n1)
+            [ -z "$KERNEL_PKG" ] && { echo "❌ ERROR: Could not parse real kernel package name."; exit 1; }
+
+            KERNEL="linux-image-$KERNEL_PKG"
+            echo "✅ Detected kernel package: $KERNEL"
+
+            # Optionally verify it exists
+            apt-cache policy "$KERNEL" | grep -q "Candidate:" || { echo "❌ ERROR: Kernel package '$KERNEL' not found."; exit 1; }
+
+            echo "✅ Detected latest kernel version: $KERNEL_PKG"
+            echo "KERNEL_INSTALL_ENABLED=true" >> $GITHUB_OUTPUT
+            echo "KERNEL_VERSION=$KERNEL_PKG" >> $GITHUB_OUTPUT
+          fi
+
+          echo -e "\n## 4. Processing NVIDIA Configuration ##"
+          IS_NVIDIA_ENABLED=false
+          ENABLED_VAL="0"
+          if [ -n "$INPUT_NVIDIA_ENABLED" ]; then ENABLED_VAL="$INPUT_NVIDIA_ENABLED";
+          elif [ -n "$VAR_NVIDIA_ENABLED" ]; then ENABLED_VAL="$VAR_NVIDIA_ENABLED"; fi
+          if [ "$(lower "$ENABLED_VAL")" = "1" ] || [ "$(lower "$ENABLED_VAL")" = "true" ]; then IS_NVIDIA_ENABLED=true; fi
+          
+          # Check if kernel installation is enabled (NVIDIA requires kernel headers)
+          KERNEL_INSTALL_ENABLED_VAL="$(grep '^KERNEL_INSTALL_ENABLED=' $GITHUB_OUTPUT | cut -d'=' -f2)"
+          if [ "$IS_NVIDIA_ENABLED" = "true" ] && [ "$KERNEL_INSTALL_ENABLED_VAL" != "true" ]; then
+            echo "⚠️  WARNING: NVIDIA installation requested but kernel installation is disabled. Disabling NVIDIA installation."
+            IS_NVIDIA_ENABLED=false
+          fi
+          
+          NVIDIA_DRIVER_URL="0"
+          if [ "$IS_NVIDIA_ENABLED" = "true" ]; then
+            echo "NVIDIA Install is ENABLED."
+            NVIDIA_VERSION_OVERRIDE="0"
+            if [ -n "$INPUT_NVIDIA_VERSION" ] && [ "$INPUT_NVIDIA_VERSION" != "0" ]; then NVIDIA_VERSION_OVERRIDE="$INPUT_NVIDIA_VERSION";
+            elif [ -n "$VAR_NVIDIA_VERSION" ] && [ "$VAR_NVIDIA_VERSION" != "0" ]; then NVIDIA_VERSION_OVERRIDE="$VAR_NVIDIA_VERSION"; fi
+            ARCH="x86_64"
+            echo "Effective NVIDIA_VERSION_OVERRIDE: '$NVIDIA_VERSION_OVERRIDE', Arch: '$ARCH'"
+
+            RELEASES_JSON=$(curl -sL "https://docs.nvidia.com/datacenter/tesla/drivers/releases.json")
+            [ -z "$RELEASES_JSON" ] && { echo "❌ ERROR: Failed to download NVIDIA release data."; exit 1; }
+            
+            if [ "$NVIDIA_VERSION_OVERRIDE" != "0" ]; then
+              DRIVER_URL=$(echo "$RELEASES_JSON" | jq -r --arg ver "$NVIDIA_VERSION_OVERRIDE" --arg arch "$ARCH" '.[] | .driver_info[] | select(.release_version == $ver) | .runfile_url[$arch]' | head -n1)
+            else
+              DRIVER_URL=$(echo "$RELEASES_JSON" | jq -r --arg arch "$ARCH" 'first(.[] | select(.type == "production branch")) | .driver_info[0].runfile_url[$arch]')
+            fi
+
+            [ -z "$DRIVER_URL" ] || [ "$DRIVER_URL" = "null" ] && { echo "❌ ERROR: Could not determine a valid NVIDIA driver URL for version '$NVIDIA_VERSION_OVERRIDE' and arch '$ARCH'."; exit 1; }
+            NVIDIA_DRIVER_URL="$DRIVER_URL"
+            echo "✅ Success! NVIDIA Driver URL found: $NVIDIA_DRIVER_URL"
+          else
+            echo "NVIDIA Install is DISABLED."
+          fi
+
+          echo -e "\n## 5. Final Build Configuration ##"
+          echo "NVIDIA_INSTALL_ENABLED=${IS_NVIDIA_ENABLED}" >> $GITHUB_OUTPUT
+          echo "NVIDIA_DRIVER_URL=${NVIDIA_DRIVER_URL}" >> $GITHUB_OUTPUT
+          
+          echo -e "\n📋 Final Configuration Summary:"
+          echo "   KERNEL_INSTALL_ENABLED: $(grep '^KERNEL_INSTALL_ENABLED=' $GITHUB_OUTPUT | cut -d'=' -f2)"
+          echo "   KERNEL_VERSION: $(grep '^KERNEL_VERSION=' $GITHUB_OUTPUT | cut -d'=' -f2)"
+          echo "   NVIDIA_INSTALL_ENABLED: ${IS_NVIDIA_ENABLED}"
+          echo "   DISABLE_AUTOLOGIN: $(grep '^DISABLE_AUTOLOGIN=' $GITHUB_OUTPUT | cut -d'=' -f2)"
+          echo "   FIRSTBOOT_ENABLED: $(grep '^FIRSTBOOT_ENABLED=' $GITHUB_OUTPUT | cut -d'=' -f2)"
+          
+          cat $GITHUB_OUTPUT
+
+      - name: 🏷️ Generate Docker Tag Name
+        id: taggen
+        run: |
+          KERNEL_VER_RAW="${{ steps.config.outputs.KERNEL_VERSION }}"
+          KERNEL_INSTALL_ENABLED="${{ steps.config.outputs.KERNEL_INSTALL_ENABLED }}"
+          NVIDIA_ENABLED="${{ steps.config.outputs.NVIDIA_INSTALL_ENABLED }}"
+          NVIDIA_URL="${{ steps.config.outputs.NVIDIA_DRIVER_URL }}"
+
+          # If kernel installation is disabled, skip kernel/NVIDIA parts
+          if [ "$KERNEL_INSTALL_ENABLED" = "false" ]; then
+            TAG_NAME="ray-no-kernel"
+            echo "🔖 Kernel installation disabled; using 'no-kernel' tag."
+          else
+            KERNEL_VER=$(echo "U24.04-$KERNEL_VER_RAW" | tr '.' '-' | tr '[:upper:]' '[:lower:]')
+            TAG_NAME="${KERNEL_VER}-ray"
+
+            if [ "$NVIDIA_ENABLED" = "true" ]; then
+              # Extract version from URL: NVIDIA-Linux-x86_64-570.148.08.run
+              NVIDIA_VER=$(basename "$NVIDIA_URL" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+')
+              NVIDIA_VER=$(echo "$NVIDIA_VER" | tr '.' '-')  # slugify
+              TAG_NAME="${TAG_NAME}-nvidia-${NVIDIA_VER}"
+            fi
+          fi
+
+          echo "Generated TAG_NAME: $TAG_NAME"
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
+          
+      - name: 🐳 Build Docker Image
+        run: |
+          docker build \
+            --build-arg KERNEL_VERSION=${{ steps.config.outputs.KERNEL_VERSION }} \
+            --build-arg DISABLE_AUTOLOGIN=${{ steps.config.outputs.DISABLE_AUTOLOGIN }} \
+            --build-arg NVIDIA_INSTALL_ENABLED=${{ steps.config.outputs.NVIDIA_INSTALL_ENABLED }} \
+            --build-arg NVIDIA_DRIVER_URL=${{ steps.config.outputs.NVIDIA_DRIVER_URL }} \
+            --build-arg FIRSTBOOT_ENABLED=${{ steps.config.outputs.FIRSTBOOT_ENABLED }} \
+            --build-arg KERNEL_INSTALL_ENABLED=${{ steps.config.outputs.KERNEL_INSTALL_ENABLED }} \
+            -t ${{ secrets.DOCKER_HUB_REPO }}:${{ steps.taggen.outputs.TAG_NAME }} .
+
+      - name: 🚀 Login to DockerHub
+        run: |
+          echo "${{ secrets.DOCKER_HUB_TOKEN }}" | docker login -u "${{ secrets.DOCKER_HUB_USER }}" --password-stdin
+
+      - name: 🚀 Push Image to DockerHub
+        run: |
+          docker push ${{ secrets.DOCKER_HUB_REPO }}:${{ steps.taggen.outputs.TAG_NAME }}

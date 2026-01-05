@@ -1,0 +1,20 @@
+[Unit]
+Description=First Boot Setup for Warewulf Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+EnvironmentFile=-/etc/environment
+ExecStartPre=/bin/sleep 15
+ExecStart=/usr/local/sbin/firstboot.sh
+TimeoutStartSec=infinity
+RemainAfterExit=yes
+SuccessExitStatus=0 1
+
+# Ensure logs are preserved for debugging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
