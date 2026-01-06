@@ -122,8 +122,8 @@ RUN apt-get update && apt-get install -y \
 
 # --- 5. Install Ray (latest version with GPU support) ---
 # Note: CUDA toolkit will be provided via CVMFS (Digital Research Alliance of Canada)
-RUN pip3 install --no-cache-dir --upgrade pip && \
-    pip3 install --no-cache-dir "ray[default,gpu]"
+RUN pip3 install --no-cache-dir --break-system-packages --upgrade pip && \
+    pip3 install --no-cache-dir --break-system-packages "ray[default,gpu]"
 
 # --- 6. Install NVIDIA Driver if enabled (requires kernel installation) ---
 # Note: CUDA toolkit not installed here - will be available via CVMFS
