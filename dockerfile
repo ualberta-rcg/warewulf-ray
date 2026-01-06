@@ -214,20 +214,28 @@ RUN mkdir -p /etc/ray && \
     mkdir -p /var/lib/ray
 
 # --- 12. Final Cleanup ---
+# Only remove build/dev packages that are actually installed and safe to remove
+# Keep essential runtime packages like multipath-tools, software-properties-common, etc.
 RUN apt-mark manual libvulkan1 mesa-vulkan-drivers libglvnd0 && \
-    apt-get purge -y \
-        mesa-common-dev xserver-xorg-dev xorg-dev \
-        libx*dev libgl*dev libegl*dev libgles*dev \
-        libx11-dev libxext-dev libxft-dev \
-        build-essential dkms gcc make pkg-config \
+    for pkg in mesa-common-dev xserver-xorg-dev xorg-dev \
+        libx11-dev libxext-dev libxft-dev libxau-dev libxdmcp-dev \
+        libxcb1-dev libxcomposite-dev libxcursor-dev libxdamage-dev \
+        libxfixes-dev libxfont-dev libxi-dev libxinerama-dev \
+        libxkbfile-dev libxmu-dev libxpm-dev libxrandr-dev \
+        libxrender-dev libxres-dev libxss-dev libxt-dev libxtst-dev \
+        libxv-dev libxvmc-dev libxxf86dga-dev libxxf86vm-dev \
+        libgl-dev libglvnd-dev libglvnd-core-dev libglx-dev \
+        libegl-dev libgles-dev libdmx-dev libfontconfig-dev \
+        build-essential dkms gcc g++ make pkg-config dpkg-dev \
         libfreetype-dev libpng-dev uuid-dev libexpat1-dev \
-        python-babel-localedata \
-        humanity-icon-theme \
-        iso-codes \
-        xorg-dev \
-        libx11-dev \
-        libxext-dev \
-        initramfs-tools && \
+        libpython3-dev libpython3.12-dev python3-dev python3.12-dev \
+        python-babel-localedata humanity-icon-theme iso-codes; do \
+        dpkg -l "$pkg" >/dev/null 2>&1 && apt-get purge -y "$pkg" || true; \
+    done && \
+    # Only remove initramfs-tools if kernel install was disabled
+    if [ "$KERNEL_INSTALL_ENABLED" != "true" ]; then \
+        apt-get purge -y initramfs-tools || true; \
+    fi && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf \
