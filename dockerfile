@@ -22,7 +22,8 @@ USER root
 RUN echo "root:changeme" | chpasswd
 
 # --- 2. Create wwuser user accounts (UID 2000) ---
-RUN groupadd -g 2000 wwgroup && \
+RUN mkdir -p /local/home && \
+    groupadd -g 2000 wwgroup && \
     useradd -u 2000 -m -d /local/home/wwuser -g wwgroup -G sudo -s /bin/bash wwuser && \
     echo "wwuser:wwpassword" | chpasswd
 
@@ -122,9 +123,15 @@ RUN apt-get update && apt-get install -y \
 
 # --- 5. Install Ray (latest version with GPU support) ---
 # Note: CUDA toolkit will be provided via CVMFS (Digital Research Alliance of Canada)
-# Skip pip upgrade since Debian-managed pip cannot be uninstalled
-# pip 24.0 is sufficient for installing Ray
-RUN pip3 install --no-cache-dir --break-system-packages "ray[default,gpu]"
+# Install Ray in a virtual environment to avoid PEP 668 and Debian package conflicts
+RUN python3 -m venv /opt/ray && \
+    /opt/ray/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/ray/bin/pip install --no-cache-dir "ray[default,gpu]" && \
+    echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/profile.d/ray.sh && \
+    echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/bash.bashrc
+
+# Add Ray venv to PATH for all sessions
+ENV PATH="/opt/ray/bin:$PATH"
 
 # --- 6. Install NVIDIA Driver if enabled (requires kernel installation) ---
 # Note: CUDA toolkit not installed here - will be available via CVMFS
