@@ -174,6 +174,22 @@ The `ray[all]` installation includes:
 
 The virtual environment is automatically added to `PATH` for all users.
 
+## Testing
+
+A comprehensive test script is included to verify Ray and Triton installation:
+
+```bash
+# Run the integration test suite
+./test_ray_triton_integration.sh
+```
+
+The test script verifies:
+- Ray installation and cluster startup
+- Ray Serve deployment and endpoints
+- Triton client libraries
+- PyTriton functionality
+- Resource usage and GPU detection
+
 ## Troubleshooting
 
 ### Ray Not Found
