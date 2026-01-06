@@ -31,60 +31,49 @@ RUN mkdir -p /local/home && \
 RUN groupadd -g 2001 distgroup && \
     useradd -u 2001 -m -d /local/home/dist -g distgroup -s /bin/bash dist
 
-# --- 4. Install Core Tools, Debugging, and Dependencies ---
-RUN apt-get update && apt-get install -y \
+# --- 4. Update package lists (with error handling for mirror sync issues) ---
+# Handle transient mirror sync errors gracefully (dep11 metadata issues)
+RUN apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false || \
+    (sleep 5 && apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false) || true
+
+# --- 5. Install Core Tools, Debugging, and Dependencies ---
+RUN apt-get install -y \
+    # Essential system
     sudo \
     openssh-server \
     openssh-client \
-    net-tools \
-    iproute2 \
-    pciutils \
-    lvm2 \
-    nfs-common \
-    multipath-tools \
-    ifupdown \
-    rsync \
-    curl \
-    wget \
-    vim \
-    less \
-    htop \
-    sysstat \
-    cron \
-    ipmitool \
-    smartmontools \
-    lm-sensors \
-    netplan.io \
-    unzip \
-    gnupg \
-    ansible \
     systemd \
     systemd-sysv \
     dbus \
-    initramfs-tools \
-    socat \
-    conntrack \
-    ebtables \
-    ethtool \
-    ipset \
-    iptables \
-    tcpdump \
+    rsyslog \
+    # Essential networking
+    iproute2 \
+    iputils-ping \
+    # Essential utilities
+    curl \
+    wget \
+    less \
+    # Testing/debugging tools
+    vim \
+    htop \
     strace \
     lsof \
+    tcpdump \
     jq \
     git \
-    iputils-ping \
-    lsb-release \
-    bash-completion \
-    cgroup-tools \
-    auditd \
-    apt-transport-https \
-    software-properties-common \
-    ca-certificates \
-    kmod \
+    # Essential for Ray/Python
+    python3 \
+    python3-pip \
+    python3-venv \
+    # Essential for HPC/compute
     numactl \
-    apt-utils \
-    netbase \
+    cgroup-tools \
+    kmod \
+    # Storage (if needed)
+    nfs-common \
+    multipath-tools \
+    # Essential dependencies
+    ca-certificates \
     libnuma1 \
     libpam0g \
     libyaml-0-2 \
@@ -92,18 +81,32 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     libcurl4 \
     libdbus-1-3 \
-    rsyslog \
-    logrotate \
-    python3 \
-    python3-pip \
-    python3-venv && \
+    netbase && \
+    # Optional: Ansible (only if firstboot enabled)
+    if [ "$FIRSTBOOT_ENABLED" = "true" ]; then \
+        apt-get install -y ansible; \
+    fi && \
     if [ "$KERNEL_INSTALL_ENABLED" = "true" ]; then \
         apt-get install -y \
             linux-image-${KERNEL_VERSION} \
             linux-headers-${KERNEL_VERSION} \
             linux-modules-${KERNEL_VERSION} \
-            linux-modules-extra-${KERNEL_VERSION} && \
+            linux-modules-extra-${KERNEL_VERSION} \
+            initramfs-tools && \
         ln -s /usr/src/linux-headers-${KERNEL_VERSION} /lib/modules/${KERNEL_VERSION}/build; \
+    fi && \
+    if [ "$NVIDIA_INSTALL_ENABLED" = "true" ] && [ "$KERNEL_INSTALL_ENABLED" = "true" ]; then \
+        apt-get install -y \
+            build-essential \
+            pkg-config \
+            xorg-dev \
+            libx11-dev \
+            libxext-dev \
+            libglvnd-dev \
+            libglvnd-core-dev \
+            libgl-dev \
+            libegl-dev \
+            libgles-dev; \
     fi && \
     mkdir -p /var/log/journal && \
     systemd-tmpfiles --create --prefix /var/log/journal && \
@@ -121,7 +124,7 @@ RUN apt-get update && apt-get install -y \
       systemd-vconsole-setup.service \
       systemd-timesyncd.service
 
-# --- 5. Install Ray (full installation with all extras) and Triton support ---
+# --- 6. Install Ray (full installation with all extras) and Triton support ---
 # Note: CUDA toolkit will be provided via CVMFS (Digital Research Alliance of Canada)
 # Install Ray in a virtual environment to avoid PEP 668 and Debian package conflicts
 # ray[all] includes: default, serve, tune, rllib, data, train, air, gpu, and more
@@ -138,16 +141,10 @@ RUN python3 -m venv /opt/ray && \
 # Add Ray venv to PATH for all sessions
 ENV PATH="/opt/ray/bin:$PATH"
 
-# --- 6. Install NVIDIA Driver if enabled (requires kernel installation) ---
+# --- 7. Install NVIDIA Driver if enabled (requires kernel installation) ---
 # Note: CUDA toolkit not installed here - will be available via CVMFS
+# Build tools are already installed in Step 5 if NVIDIA_INSTALL_ENABLED=true
 RUN if [ "$NVIDIA_INSTALL_ENABLED" = "true" ] && [ "$KERNEL_INSTALL_ENABLED" = "true" ]; then \
-        apt-get update && apt-get install -y \
-            build-essential \
-            pkg-config \
-            xorg-dev \
-            libx11-dev \
-            libxext-dev \
-            libglvnd-dev && \
         mkdir -p /build && cd /build && \
         echo "📥 Downloading NVIDIA driver from ${NVIDIA_DRIVER_URL}..." && \
         wget -q "${NVIDIA_DRIVER_URL}" -O /tmp/NVIDIA.run && \
@@ -180,7 +177,7 @@ RUN if [ "$NVIDIA_INSTALL_ENABLED" = "true" ] && [ "$KERNEL_INSTALL_ENABLED" = "
         [ -e /dev/nvidia-uvm-tools ] || mknod -m 666 /dev/nvidia-uvm-tools c 243 1 ; \
     fi
 
-# --- 7. Configure Autologin based on DISABLE_AUTOLOGIN ---
+# --- 8. Configure Autologin based on DISABLE_AUTOLOGIN ---
 RUN if [ "$DISABLE_AUTOLOGIN" != "true" ]; then \
         mkdir -p /etc/systemd/system/getty@tty1.service.d && \
         echo '[Service]' > /etc/systemd/system/getty@tty1.service.d/override.conf && \
@@ -190,7 +187,7 @@ RUN if [ "$DISABLE_AUTOLOGIN" != "true" ]; then \
         rm -rf /etc/systemd/system/getty@tty1.service.d; \
     fi
 
-# --- 8. Configure Firstboot Service ---
+# --- 9. Configure Firstboot Service ---
 COPY firstboot.service /etc/systemd/system/
 COPY firstboot.sh /usr/local/sbin/
 RUN if [ "$FIRSTBOOT_ENABLED" = "true" ]; then \
@@ -201,24 +198,24 @@ RUN if [ "$FIRSTBOOT_ENABLED" = "true" ]; then \
         rm -f /usr/local/sbin/firstboot.sh; \
     fi
 
-# --- 9. Enable Core Services ---
+# --- 10. Enable Core Services ---
 RUN systemctl enable \
     rsyslog.service \
     ssh.service \
     auditd.service
 
-# --- 10. Generate Initramfs for Selected Kernel (if kernel is installed) ---
+# --- 11. Generate Initramfs for Selected Kernel (if kernel is installed) ---
 RUN if [ "$KERNEL_INSTALL_ENABLED" = "true" ]; then \
         update-initramfs -u -k "$KERNEL_VERSION"; \
     fi
 
-# --- 11. Create Ray Directories ---
+# --- 12. Create Ray Directories ---
 RUN mkdir -p /etc/ray && \
     mkdir -p /var/log/ray && \
     mkdir -p /tmp/ray && \
     mkdir -p /var/lib/ray
 
-# --- 12. Final Cleanup ---
+# --- 13. Final Cleanup ---
 # Only remove build/dev packages that are actually installed and safe to remove
 # Keep essential runtime packages like multipath-tools, software-properties-common, etc.
 RUN apt-mark manual libvulkan1 mesa-vulkan-drivers libglvnd0 && \
@@ -262,7 +259,7 @@ RUN apt-mark manual libvulkan1 mesa-vulkan-drivers libglvnd0 && \
     find / -name '.wget-hsts' -delete && \
     find / -name '.cache' -exec rm -rf {} +
 
-# --- 13. Unmask and Enable Services ---
+# --- 14. Unmask and Enable Services ---
 RUN systemctl unmask \
     systemd-udevd.service \
     systemd-udevd-kernel.socket \
@@ -285,6 +282,6 @@ RUN systemctl unmask \
     rsyslog.service \
     auditd.service
 
-# --- 14. Systemd-compatible boot (Warewulf) ---
+# --- 15. Systemd-compatible boot (Warewulf) ---
 #STOPSIGNAL SIGRTMIN+3
 #CMD ["/sbin/init"]
