@@ -121,13 +121,17 @@ RUN apt-get update && apt-get install -y \
       systemd-vconsole-setup.service \
       systemd-timesyncd.service
 
-# --- 5. Install Ray (latest version with GPU support) and Triton client ---
+# --- 5. Install Ray (full installation with all extras) and Triton support ---
 # Note: CUDA toolkit will be provided via CVMFS (Digital Research Alliance of Canada)
 # Install Ray in a virtual environment to avoid PEP 668 and Debian package conflicts
+# ray[all] includes: default, serve, tune, rllib, data, train, air, gpu, and more
+# tritonclient[all]: Client libraries for connecting to Triton servers (HTTP, gRPC)
+# nvidia-pytriton: PyTriton wrapper for Triton's Python API (embedded mode with Ray Serve)
 RUN python3 -m venv /opt/ray && \
     /opt/ray/bin/pip install --no-cache-dir --upgrade pip && \
-    /opt/ray/bin/pip install --no-cache-dir "ray[default,gpu]" && \
+    /opt/ray/bin/pip install --no-cache-dir "ray[all]" && \
     /opt/ray/bin/pip install --no-cache-dir "tritonclient[all]" && \
+    /opt/ray/bin/pip install --no-cache-dir "nvidia-pytriton" && \
     echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/profile.d/ray.sh && \
     echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/bash.bashrc
 

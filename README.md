@@ -5,8 +5,10 @@ A Warewulf-compatible container image for deploying Ray with NVIDIA Triton Infer
 ## Overview
 
 This container image provides:
-- **Ray** with GPU support for distributed computing and model serving
-- **NVIDIA Triton Inference Server** Python API client for scalable inference
+- **Ray** (full installation with all extras: default, serve, tune, rllib, data, train, air, gpu, and more)
+- **NVIDIA Triton Inference Server** support:
+  - `tritonclient[all]`: Client libraries for connecting to Triton servers (HTTP, gRPC)
+  - `nvidia-pytriton`: PyTriton wrapper for Triton's Python API (embedded mode with Ray Serve)
 - **NVIDIA GPU driver** support (optional, configurable)
 - **Systemd** support for service management
 - **Ansible** integration for first-boot configuration
@@ -15,6 +17,7 @@ This container image provides:
 ## Features
 
 - Full systemd support for service management
+- Complete Ray installation with all extras (Serve, Tune, RLlib, Data, Train, AIR, GPU, etc.)
 - GPU support with optional NVIDIA driver installation
 - Ray Serve integration with Triton Inference Server
 - First-boot configuration via Ansible playbooks
@@ -153,10 +156,21 @@ When `NVIDIA_INSTALL_ENABLED=true` and `KERNEL_INSTALL_ENABLED=true`:
 
 ## Python Environment
 
-Ray and Triton are installed in a virtual environment at `/opt/ray` to:
+Ray (with all extras) and Triton are installed in a virtual environment at `/opt/ray` to:
 - Avoid conflicts with system Python packages
 - Comply with PEP 668 (Ubuntu 24.04)
 - Isolate dependencies from system packages
+
+The `ray[all]` installation includes:
+- **default**: Core Ray functionality
+- **serve**: Ray Serve for model serving (includes starlette, uvicorn, etc.)
+- **tune**: Ray Tune for hyperparameter tuning
+- **rllib**: Ray RLlib for reinforcement learning
+- **data**: Ray Data for data processing
+- **train**: Ray Train for distributed training
+- **air**: Ray AIR for end-to-end ML workflows
+- **gpu**: GPU support and CUDA integration
+- And other optional dependencies
 
 The virtual environment is automatically added to `PATH` for all users.
 
