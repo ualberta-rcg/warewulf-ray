@@ -53,6 +53,7 @@ RUN apt-get install -y \
     curl \
     wget \
     less \
+    unzip \
     # Testing/debugging tools
     vim \
     htop \
@@ -124,7 +125,34 @@ RUN apt-get install -y \
       systemd-vconsole-setup.service \
       systemd-timesyncd.service
 
-# --- 6. Install Ray (full installation with all extras) and Triton support ---
+# --- 6. Fetch and Apply SCAP Security Guide Remediation (optional) ---
+# Install SCAP scanner and apply CIS Level 2 Server profile remediation
+RUN apt-get install -y openscap-scanner libopenscap25t64 && \
+    export SSG_VERSION=$(curl -s https://api.github.com/repos/ComplianceAsCode/content/releases/latest | grep -oP '"tag_name": "\K[^"]+' || echo "0.1.66") && \
+    echo "🔄 Using SCAP Security Guide version: $SSG_VERSION" && \
+    SSG_VERSION_NO_V=$(echo "$SSG_VERSION" | sed 's/^v//') && \
+    wget -O /ssg.zip "https://github.com/ComplianceAsCode/content/releases/download/${SSG_VERSION}/scap-security-guide-${SSG_VERSION_NO_V}.zip" && \
+    mkdir -p /usr/share/xml/scap/ssg/content && \
+    if [ -f "/ssg.zip" ]; then \
+        unzip -jo /ssg.zip "scap-security-guide-${SSG_VERSION_NO_V}/*" -d /usr/share/xml/scap/ssg/content/ && \
+        rm -f /ssg.zip; \
+    else \
+        echo "❌ Failed to download SCAP Security Guide"; exit 1; \
+    fi && \
+    SCAP_GUIDE=$(find /usr/share/xml/scap/ssg/content -name "ssg-ubuntu*-ds.xml" | sort | tail -n1) && \
+    echo "📘 Found SCAP guide: $SCAP_GUIDE" && \
+    oscap xccdf eval \
+        --remediate \
+        --profile xccdf_org.ssgproject.content_profile_cis_level2_server \
+        --results /root/oscap-results.xml \
+        --report /root/oscap-report.html \
+        "$SCAP_GUIDE" || true && \
+    rm -rf /usr/share/xml/scap/ssg/content && \
+    apt-get remove -y openscap-scanner libopenscap25t64 && \
+    apt-get autoremove -y && \
+    apt-get clean
+
+# --- 7. Install Ray (full installation with all extras) and Triton support ---
 # Note: CUDA toolkit will be provided via CVMFS (Digital Research Alliance of Canada)
 # Install Ray in a virtual environment to avoid PEP 668 and Debian package conflicts
 # ray[all] includes: default, serve, tune, rllib, data, train, air, gpu, and more
@@ -141,7 +169,7 @@ RUN python3 -m venv /opt/ray && \
 # Add Ray venv to PATH for all sessions
 ENV PATH="/opt/ray/bin:$PATH"
 
-# --- 7. Install NVIDIA Driver if enabled (requires kernel installation) ---
+# --- 8. Install NVIDIA Driver if enabled (requires kernel installation) ---
 # Note: CUDA toolkit not installed here - will be available via CVMFS
 # Build tools are already installed in Step 5 if NVIDIA_INSTALL_ENABLED=true
 RUN if [ "$NVIDIA_INSTALL_ENABLED" = "true" ] && [ "$KERNEL_INSTALL_ENABLED" = "true" ]; then \
@@ -177,7 +205,7 @@ RUN if [ "$NVIDIA_INSTALL_ENABLED" = "true" ] && [ "$KERNEL_INSTALL_ENABLED" = "
         [ -e /dev/nvidia-uvm-tools ] || mknod -m 666 /dev/nvidia-uvm-tools c 243 1 ; \
     fi
 
-# --- 8. Configure Autologin based on DISABLE_AUTOLOGIN ---
+# --- 9. Configure Autologin based on DISABLE_AUTOLOGIN ---
 RUN if [ "$DISABLE_AUTOLOGIN" != "true" ]; then \
         mkdir -p /etc/systemd/system/getty@tty1.service.d && \
         echo '[Service]' > /etc/systemd/system/getty@tty1.service.d/override.conf && \
@@ -187,7 +215,7 @@ RUN if [ "$DISABLE_AUTOLOGIN" != "true" ]; then \
         rm -rf /etc/systemd/system/getty@tty1.service.d; \
     fi
 
-# --- 9. Configure Firstboot Service ---
+# --- 10. Configure Firstboot Service ---
 COPY firstboot.service /etc/systemd/system/
 COPY firstboot.sh /usr/local/sbin/
 RUN if [ "$FIRSTBOOT_ENABLED" = "true" ]; then \
@@ -198,24 +226,23 @@ RUN if [ "$FIRSTBOOT_ENABLED" = "true" ]; then \
         rm -f /usr/local/sbin/firstboot.sh; \
     fi
 
-# --- 10. Enable Core Services ---
+# --- 11. Enable Core Services ---
 RUN systemctl enable \
     rsyslog.service \
-    ssh.service \
-    auditd.service
+    ssh.service
 
-# --- 11. Generate Initramfs for Selected Kernel (if kernel is installed) ---
+# --- 12. Generate Initramfs for Selected Kernel (if kernel is installed) ---
 RUN if [ "$KERNEL_INSTALL_ENABLED" = "true" ]; then \
         update-initramfs -u -k "$KERNEL_VERSION"; \
     fi
 
-# --- 12. Create Ray Directories ---
+# --- 13. Create Ray Directories ---
 RUN mkdir -p /etc/ray && \
     mkdir -p /var/log/ray && \
     mkdir -p /tmp/ray && \
     mkdir -p /var/lib/ray
 
-# --- 13. Final Cleanup ---
+# --- 14. Final Cleanup ---
 # Only remove build/dev packages that are actually installed and safe to remove
 # Keep essential runtime packages like multipath-tools, software-properties-common, etc.
 RUN apt-mark manual libvulkan1 mesa-vulkan-drivers libglvnd0 && \
@@ -259,7 +286,7 @@ RUN apt-mark manual libvulkan1 mesa-vulkan-drivers libglvnd0 && \
     find / -name '.wget-hsts' -delete && \
     find / -name '.cache' -exec rm -rf {} +
 
-# --- 14. Unmask and Enable Services ---
+# --- 15. Unmask and Enable Services ---
 RUN systemctl unmask \
     systemd-udevd.service \
     systemd-udevd-kernel.socket \
@@ -279,9 +306,8 @@ RUN systemctl unmask \
     getty@tty1.service \
     systemd-logind.service \
     ssh.service \
-    rsyslog.service \
-    auditd.service
+    rsyslog.service
 
-# --- 15. Systemd-compatible boot (Warewulf) ---
+# --- 16. Systemd-compatible boot (Warewulf) ---
 #STOPSIGNAL SIGRTMIN+3
 #CMD ["/sbin/init"]
