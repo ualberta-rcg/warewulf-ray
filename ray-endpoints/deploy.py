@@ -47,17 +47,25 @@ def deploy_all_endpoints():
             endpoint_instance = endpoint_class()
             app = endpoint_instance.create_app()
             
-            # Use Ray Serve's FastAPI integration
-            # Deploy the FastAPI app directly
-            deployment = serve.deployment(
-                app,
+            # Wrap FastAPI app in a Ray Serve deployment class
+            # Ray Serve expects a class with __call__ that returns responses
+            @serve.deployment(
                 name=endpoint_class.DEPLOYMENT_NAME,
                 autoscaling_config=endpoint_instance.get_autoscaling_config(),
             )
+            class FastAPIDeployment:
+                def __init__(self):
+                    self.endpoint = endpoint_instance
+                    self._app = app
+                
+                # Ray Serve will call this as an ASGI app
+                async def __call__(self, scope, receive, send):
+                    # Forward directly to FastAPI app (which is ASGI-compatible)
+                    await self._app(scope, receive, send)
             
             # Deploy using serve.run with route_prefix
             serve.run(
-                deployment.bind(),
+                FastAPIDeployment.bind(),
                 name=endpoint_class.DEPLOYMENT_NAME,
                 route_prefix=endpoint_class.ROUTE_PREFIX,
             )
@@ -79,14 +87,22 @@ def deploy_single_endpoint(endpoint_file: str):
     endpoint_instance = endpoint_class()
     app = endpoint_instance.create_app()
     
-    deployment = serve.deployment(
-        app,
+    @serve.deployment(
         name=endpoint_class.DEPLOYMENT_NAME,
         autoscaling_config=endpoint_instance.get_autoscaling_config(),
     )
+    class FastAPIDeployment:
+        def __init__(self):
+            self.endpoint = endpoint_instance
+            self._app = app
+        
+        # Make the class itself callable as an ASGI app
+        async def __call__(self, scope, receive, send):
+            # Forward to FastAPI app
+            await self._app(scope, receive, send)
     
     serve.run(
-        deployment.bind(),
+        FastAPIDeployment.bind(),
         name=endpoint_class.DEPLOYMENT_NAME,
         route_prefix=endpoint_class.ROUTE_PREFIX,
     )
