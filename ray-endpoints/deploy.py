@@ -43,21 +43,25 @@ def deploy_all_endpoints():
     deployments = []
     for endpoint_class in endpoint_classes:
         try:
-            # Create the endpoint instance to get the app
+            # Create endpoint instance
             endpoint_instance = endpoint_class()
             app = endpoint_instance.create_app()
             
-            # Create deployment
+            # Use Ray Serve's FastAPI integration
+            # Deploy the FastAPI app directly
             deployment = serve.deployment(
-                endpoint_instance,
+                app,
                 name=endpoint_class.DEPLOYMENT_NAME,
-                route_prefix=endpoint_class.ROUTE_PREFIX,
                 autoscaling_config=endpoint_instance.get_autoscaling_config(),
             )
             
-            # Deploy
-            deployment.deploy()
-            deployments.append(deployment)
+            # Deploy using serve.run with route_prefix
+            serve.run(
+                deployment.bind(),
+                name=endpoint_class.DEPLOYMENT_NAME,
+                route_prefix=endpoint_class.ROUTE_PREFIX,
+            )
+            deployments.append(endpoint_class.DEPLOYMENT_NAME)
             print(f"✓ Deployed {endpoint_class.DEPLOYMENT_NAME} at {endpoint_class.ROUTE_PREFIX}")
         except Exception as e:
             print(f"✗ Failed to deploy {endpoint_class.DEPLOYMENT_NAME}: {e}")
@@ -76,15 +80,18 @@ def deploy_single_endpoint(endpoint_file: str):
     app = endpoint_instance.create_app()
     
     deployment = serve.deployment(
-        endpoint_instance,
+        app,
         name=endpoint_class.DEPLOYMENT_NAME,
-        route_prefix=endpoint_class.ROUTE_PREFIX,
         autoscaling_config=endpoint_instance.get_autoscaling_config(),
     )
     
-    deployment.deploy()
+    serve.run(
+        deployment.bind(),
+        name=endpoint_class.DEPLOYMENT_NAME,
+        route_prefix=endpoint_class.ROUTE_PREFIX,
+    )
     print(f"✓ Deployed {endpoint_class.DEPLOYMENT_NAME}")
-    return deployment
+    return endpoint_class.DEPLOYMENT_NAME
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
