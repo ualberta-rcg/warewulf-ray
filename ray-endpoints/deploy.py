@@ -43,20 +43,22 @@ def deploy_all_endpoints():
     deployments = []
     for endpoint_class in endpoint_classes:
         try:
-            # Create endpoint instance
-            endpoint_instance = endpoint_class()
-            app = endpoint_instance.create_app()
+            # Get autoscaling config (need to create instance temporarily, but don't keep it)
+            temp_instance = endpoint_class()
+            autoscaling_config = temp_instance.get_autoscaling_config()
             
             # Wrap FastAPI app in a Ray Serve deployment class
-            # Ray Serve expects a class with __call__ that returns responses
+            # Create endpoint and app INSIDE __init__ to avoid serialization issues
             @serve.deployment(
                 name=endpoint_class.DEPLOYMENT_NAME,
-                autoscaling_config=endpoint_instance.get_autoscaling_config(),
+                autoscaling_config=autoscaling_config,
             )
             class FastAPIDeployment:
                 def __init__(self):
-                    self.endpoint = endpoint_instance
-                    self._app = app
+                    # Create endpoint instance and app here (on worker side)
+                    # This avoids serialization issues with FastAPI's thread locks
+                    self.endpoint = endpoint_class()
+                    self._app = self.endpoint.create_app()
                 
                 # Ray Serve will call this as an ASGI app
                 async def __call__(self, scope, receive, send):
@@ -84,17 +86,20 @@ def deploy_single_endpoint(endpoint_file: str):
     
     serve.start(detached=True)
     
-    endpoint_instance = endpoint_class()
-    app = endpoint_instance.create_app()
+    # Get autoscaling config (need to create instance temporarily)
+    temp_instance = endpoint_class()
+    autoscaling_config = temp_instance.get_autoscaling_config()
     
     @serve.deployment(
         name=endpoint_class.DEPLOYMENT_NAME,
-        autoscaling_config=endpoint_instance.get_autoscaling_config(),
+        autoscaling_config=autoscaling_config,
     )
     class FastAPIDeployment:
         def __init__(self):
-            self.endpoint = endpoint_instance
-            self._app = app
+            # Create endpoint instance and app here (on worker side)
+            # This avoids serialization issues with FastAPI's thread locks
+            self.endpoint = endpoint_class()
+            self._app = self.endpoint.create_app()
         
         # Make the class itself callable as an ASGI app
         async def __call__(self, scope, receive, send):
