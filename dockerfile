@@ -49,6 +49,7 @@ RUN apt-get install -y \
     # Essential networking
     iproute2 \
     iputils-ping \
+    netplan.io \
     # Essential utilities
     curl \
     wget \
