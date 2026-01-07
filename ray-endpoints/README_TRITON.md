@@ -1,0 +1,92 @@
+# Ray Serve Triton Integration
+
+Standalone model deployments using Triton Server, based on the [Ray Serve Triton integration guide](https://docs.ray.io/en/latest/serve/tutorials/triton-server-integration.html).
+
+## Structure
+
+Each model is a standalone file that can be deployed individually:
+
+- `stable_diffusion_triton.py` - Stable Diffusion with Triton Server
+- `kandinsky3_triton.py` - Kandinsky3 with Triton Server
+
+## Usage
+
+### Deploy Individual Models
+
+Each file can be run directly:
+
+```bash
+# Deploy Stable Diffusion
+cd /data/models/warewulf-ray/ray-endpoints/endpoints
+python3 stable_diffusion_triton.py
+
+# Deploy Kandinsky3 (in another terminal or after stopping the first)
+python3 kandinsky3_triton.py
+```
+
+### Features
+
+- **Scale-to-zero**: Models scale down when idle (`min_replicas=0`)
+- **GPU support**: Uses `ray_actor_options={"num_gpus": 1}`
+- **Triton Server**: Embedded Triton Server in each replica
+- **Usage metrics**: Saved to `/var/log/ray/*-triton-metrics/`
+- **Health checks**: `/health` endpoint for monitoring
+
+## API Endpoints
+
+### Stable Diffusion
+
+- **Health**: `GET http://localhost:8000/api/v1/stable-diffusion-triton/health`
+- **Generate**: `GET http://localhost:8000/api/v1/stable-diffusion-triton/generate?prompt=your+prompt`
+- **Info**: `GET http://localhost:8000/api/v1/stable-diffusion-triton/info`
+
+### Kandinsky3
+
+- **Health**: `GET http://localhost:8000/api/v1/kandinsky3-triton/health`
+- **Generate**: `GET http://localhost:8000/api/v1/kandinsky3-triton/generate?prompt=your+prompt`
+- **Info**: `GET http://localhost:8000/api/v1/kandinsky3-triton/info`
+
+## Model Repository Setup
+
+Triton Server requires a model repository structure. For Stable Diffusion, you need:
+
+```
+model_repository/
+├── stable_diffusion/
+│   ├── 1/
+│   │   └── model.py
+│   └── config.pbtxt
+├── text_encoder/
+│   ├── 1/
+│   │   └── model.onnx
+│   └── config.pbtxt
+└── vae/
+    ├── 1/
+    │   └── model.plan
+    └── config.pbtxt
+```
+
+See the [Ray Serve Triton integration guide](https://docs.ray.io/en/latest/serve/tutorials/triton-server-integration.html) for details on:
+- Exporting models to ONNX/TensorRT
+- Creating model repository structure
+- Configuring `config.pbtxt` files
+
+## Configuration
+
+Update the `model_repository` path in each file to point to your actual model repository:
+
+```python
+model_repository = "/data/models/Stable-diffusion"  # Change this
+```
+
+You can also use remote storage like S3:
+```python
+model_repository = "s3://bucket-name/models"
+```
+
+## Notes
+
+- Each deployment uses `@serve.ingress(app)` which automatically handles FastAPI integration
+- Models are loaded on-demand when first requested
+- Each replica runs its own Triton Server instance
+- GPU resources are allocated per replica (`num_gpus: 1`)
