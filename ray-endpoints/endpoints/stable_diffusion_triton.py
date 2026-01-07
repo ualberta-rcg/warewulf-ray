@@ -1,11 +1,16 @@
 """
 Stable Diffusion endpoint using Triton Server (based on Ray Serve Triton integration guide)
-Deploy individually: python stable_diffusion_triton.py
+Deploy individually: /opt/ray/bin/python stable_diffusion_triton.py
 """
 import numpy
 from pathlib import Path
 from fastapi import FastAPI
-from PIL import Image
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("⚠ PIL/Pillow not available - install with: /opt/ray/bin/pip install Pillow")
 from ray import serve
 from ray.serve.config import AutoscalingConfig
 import time
@@ -134,18 +139,27 @@ class StableDiffusionTriton:
                     "status": "error"
                 }
             
-            # Convert to PIL Image
-            image = Image.fromarray(generated_image)
-            
-            # Save if filename provided
-            if filename:
-                image.save(filename)
-                saved_path = filename
+            # Convert to PIL Image (if available) or save as numpy array
+            if PIL_AVAILABLE:
+                image = Image.fromarray(generated_image)
+                
+                # Save if filename provided
+                if filename:
+                    image.save(filename)
+                    saved_path = filename
+                else:
+                    # Auto-generate filename
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    saved_path = f"generated_image_{timestamp}.jpg"
+                    image.save(saved_path)
             else:
-                # Auto-generate filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                saved_path = f"generated_image_{timestamp}.jpg"
-                image.save(saved_path)
+                # Fallback: save as numpy array
+                if filename:
+                    saved_path = filename
+                else:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    saved_path = f"generated_image_{timestamp}.npy"
+                numpy.save(saved_path, generated_image)
             
             end_time = time.time()
             latency_ms = (end_time - start_time) * 1000

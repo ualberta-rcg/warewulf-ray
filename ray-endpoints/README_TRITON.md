@@ -9,20 +9,34 @@ Each model is a standalone file that can be deployed individually:
 - `stable_diffusion_triton.py` - Stable Diffusion with Triton Server
 - `kandinsky3_triton.py` - Kandinsky3 with Triton Server
 
+## Prerequisites
+
+Install required packages in the Ray virtual environment:
+
+```bash
+# Install Pillow for image handling
+/opt/ray/bin/pip install Pillow
+
+# Install numpy if not already available
+/opt/ray/bin/pip install numpy
+```
+
 ## Usage
 
 ### Deploy Individual Models
 
-Each file can be run directly:
+Each file can be run directly using the Ray venv Python:
 
 ```bash
 # Deploy Stable Diffusion
 cd /data/models/warewulf-ray/ray-endpoints/endpoints
-python3 stable_diffusion_triton.py
+/opt/ray/bin/python stable_diffusion_triton.py
 
 # Deploy Kandinsky3 (in another terminal or after stopping the first)
-python3 kandinsky3_triton.py
+/opt/ray/bin/python kandinsky3_triton.py
 ```
+
+**Important**: Always use `/opt/ray/bin/python` instead of system `python3` to ensure you're using the Ray virtual environment with all dependencies.
 
 ### Features
 
