@@ -3,10 +3,28 @@ Deploy all discovered endpoints
 """
 from ray import serve
 from ray.serve.deployment import Deployment
-from .loader import discover_endpoints, load_endpoint_from_file
-from .base import BaseEndpoint
 from typing import List
 import sys
+from pathlib import Path
+
+# Handle both direct execution and module import
+# Add current directory to path so we can import from it
+_current_dir = Path(__file__).parent
+if str(_current_dir) not in sys.path:
+    sys.path.insert(0, str(_current_dir))
+
+# Import using relative imports (works when run from parent directory)
+# or absolute imports (works when run directly)
+try:
+    from .loader import discover_endpoints, load_endpoint_from_file
+    from .base import BaseEndpoint
+except ImportError:
+    # If relative import fails, import directly from current directory
+    import loader
+    import base
+    discover_endpoints = loader.discover_endpoints
+    load_endpoint_from_file = loader.load_endpoint_from_file
+    BaseEndpoint = base.BaseEndpoint
 
 def deploy_all_endpoints():
     """Discover and deploy all endpoints"""

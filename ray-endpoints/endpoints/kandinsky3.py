@@ -1,7 +1,18 @@
 """
 Kandinsky3 endpoint with polling, queueing, and usage stats
 """
-from ..base import BaseEndpoint
+import sys
+from pathlib import Path
+
+# Handle imports - try relative first, then absolute
+try:
+    from ..base import BaseEndpoint
+except ImportError:
+    # If relative import fails, add parent to path and import
+    _parent = Path(__file__).parent.parent
+    if str(_parent) not in sys.path:
+        sys.path.insert(0, str(_parent))
+    from base import BaseEndpoint
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from typing import Dict, Any

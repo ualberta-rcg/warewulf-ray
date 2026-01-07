@@ -23,6 +23,8 @@ fi
 
 # Deploy endpoints
 echo "📦 Deploying endpoints..."
+# Run deploy.py from the ray-endpoints directory
+cd "$SCRIPT_DIR"
 python3 deploy.py
 
 echo ""
