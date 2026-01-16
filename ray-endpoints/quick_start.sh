@@ -6,6 +6,20 @@ set -e
 
 echo "🚀 Starting Ray Serve endpoints deployment..."
 
+# Check if cleanup flag is set
+CLEANUP=${1:-""}
+if [ "$CLEANUP" = "--cleanup" ] || [ "$CLEANUP" = "-c" ]; then
+    echo "🧹 Cleaning up before deployment..."
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$SCRIPT_DIR/cleanup_ray_serve.sh" ]; then
+        bash "$SCRIPT_DIR/cleanup_ray_serve.sh"
+        echo ""
+        sleep 2
+    else
+        echo "⚠ Cleanup script not found, skipping cleanup"
+    fi
+fi
+
 # Check if Ray is available
 if ! command -v ray &> /dev/null; then
     echo "❌ Ray not found. Make sure Ray is in PATH."
@@ -77,3 +91,78 @@ echo "  curl http://localhost:8000/api/v1/stable-diffusion/health"
 echo "  curl http://${HEAD_IP}:8000/api/v1/stable-diffusion/health"
 echo "  curl http://localhost:8000/api/v1/kandinsky3/health"
 echo "  curl http://${HEAD_IP}:8000/api/v1/kandinsky3/health"
+echo ""
+echo "To cleanup and redeploy:"
+echo "  bash quick_start.sh --cleanup"
+echo ""
+echo "To check routes:"
+echo "  curl http://localhost:8000/-/routes"
+echo ""
+echo "Verifying deployment..."
+$PYTHON << 'EOF' || echo "⚠ Verification had issues, but deployment may still be successful"
+import ray
+from ray import serve
+import sys
+import time
+
+try:
+    ray.init(ignore_reinit_error=True)
+    serve.start(detached=True)
+    
+    # Wait a moment for deployments to register
+    time.sleep(2)
+    
+    status = serve.status()
+    print("\n=== Deployment Status ===")
+    
+    if hasattr(status, 'applications') and status.applications:
+        print(f"✓ Found {len(status.applications)} application(s):")
+        for app_name, app_info in status.applications.items():
+            print(f"\n  App: {app_name}")
+            if hasattr(app_info, 'status'):
+                print(f"    Status: {app_info.status}")
+            if hasattr(app_info, 'deployments'):
+                for dep_name, dep_info in app_info.deployments.items():
+                    print(f"    Deployment: {dep_name}")
+                    if hasattr(dep_info, 'status'):
+                        print(f"      Status: {dep_info.status}")
+                    if hasattr(dep_info, 'replicas'):
+                        replicas = dep_info.replicas
+                        print(f"      Replicas: {replicas}")
+                        if replicas == 0:
+                            print(f"      ⚠ Scaled to zero - will scale up on first request")
+    else:
+        print("⚠ No applications found - deployments may still be starting")
+        print("  Wait a few seconds and check again")
+    
+    # Try to get routes
+    try:
+        import requests
+        response = requests.get("http://localhost:8000/-/routes", timeout=3)
+        if response.status_code == 200:
+            routes_text = response.text.strip()
+            if routes_text and routes_text != "Route table is not populated yet.":
+                print(f"\n✓ Routes available:")
+                try:
+                    import json
+                    routes = response.json()
+                    for route, info in routes.items():
+                        print(f"  {route}")
+                except:
+                    print(f"  {routes_text}")
+            else:
+                print(f"\n⚠ Route table not populated yet (deployments may be scaling up)")
+        else:
+            print(f"\n⚠ Could not fetch routes (HTTP {response.status_code})")
+    except ImportError:
+        print(f"\n⚠ requests library not available - install with: /opt/ray/bin/pip install requests")
+    except Exception as e:
+        print(f"\n⚠ Could not check routes: {e}")
+    
+    sys.exit(0)
+except Exception as e:
+    print(f"✗ Error verifying deployment: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+EOF

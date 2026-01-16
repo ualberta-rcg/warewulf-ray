@@ -14,7 +14,8 @@ def cleanup_serve():
     if ray_address:
         ray.init(address=ray_address, ignore_reinit_error=True)
     else:
-        ray.init(address='auto', ignore_reinit_error=True)
+        # Don't use 'auto' - connect to local Ray
+        ray.init(ignore_reinit_error=True)
     
     try:
         serve.start(detached=True)

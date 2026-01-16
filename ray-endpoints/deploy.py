@@ -53,13 +53,33 @@ def connect_to_ray():
             if ray.is_initialized():
                 print("✓ Using existing Ray connection (from systemd service)")
                 return
+            
+            # Try to get the Ray address from the running cluster
+            # First try to find the head node address
+            try:
+                # Check if there's a ray cluster info file
+                import subprocess
+                result = subprocess.run(['ray', 'status'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    # Parse the output to find the address
+                    # Ray status shows the address in the output
+                    for line in result.stdout.split('\n'):
+                        if 'ray://' in line or ':' in line:
+                            # Try to extract address
+                            pass
+            except Exception:
+                pass
+            
             # Try to connect to local Ray (should be running via systemd)
+            # Don't use 'auto' - it doesn't work reliably
+            # Instead, try connecting without address (uses default local connection)
             ray.init(ignore_reinit_error=True)
             print("✓ Connected to local Ray")
         except Exception as e:
             print(f"⚠ Could not connect to Ray: {e}")
             print("  Ray should be running via systemd service")
             print("  Or set RAY_ADDRESS to connect to a remote cluster")
+            print("  Example: export RAY_ADDRESS=172.26.92.232:6379")
             raise
 
 def deploy_all_endpoints():

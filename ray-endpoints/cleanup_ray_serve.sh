@@ -1,0 +1,124 @@
+#!/bin/bash
+# Cleanup script for Ray Serve - stops Serve and cleans logs
+
+set -e
+
+echo "🧹 Cleaning up Ray Serve..."
+
+# Use the Ray Python from venv if available
+if [ -f "/opt/ray/bin/python" ]; then
+    PYTHON="/opt/ray/bin/python"
+else
+    PYTHON="python3"
+fi
+
+# Stop Ray Serve
+echo "Stopping Ray Serve..."
+$PYTHON << 'EOF'
+from ray import serve
+import ray
+
+try:
+    # Try to connect to Ray
+    try:
+        ray.init(ignore_reinit_error=True)
+    except Exception as e:
+        print(f"⚠ Could not connect to Ray: {e}")
+        print("  Ray may not be running")
+        exit(0)
+    
+    # Shutdown Serve
+    try:
+        serve.start(detached=True)
+        serve.shutdown()
+        print("✓ Ray Serve stopped")
+    except Exception as e:
+        print(f"⚠ Ray Serve may not be running: {e}")
+except Exception as e:
+    print(f"⚠ Error during cleanup: {e}")
+EOF
+
+# Clean up Ray Serve logs
+echo "Cleaning Ray Serve logs..."
+RAY_LOG_DIRS=(
+    "/tmp/ray/session_*/logs/serve"
+    "/var/log/ray/serve"
+    "/tmp/ray/session_*/logs"
+)
+
+for pattern in "${RAY_LOG_DIRS[@]}"; do
+    if ls $pattern 1> /dev/null 2>&1; then
+        echo "  Cleaning: $pattern"
+        find $pattern -type f -name "*.log" -mtime +7 -delete 2>/dev/null || true
+        find $pattern -type f -name "*.out" -mtime +7 -delete 2>/dev/null || true
+        find $pattern -type f -name "*.err" -mtime +7 -delete 2>/dev/null || true
+    fi
+done
+
+# Clean up old session directories (older than 7 days)
+if [ -d "/tmp/ray" ]; then
+    echo "Cleaning old Ray session directories..."
+    find /tmp/ray -maxdepth 1 -type d -name "session_*" -mtime +7 -exec rm -rf {} + 2>/dev/null || true
+fi
+
+# Clean up metrics directories (keep recent, remove old)
+METRICS_DIRS=(
+    "/var/log/ray/sd-metrics"
+    "/var/log/ray/sd-triton-metrics"
+)
+
+for dir in "${METRICS_DIRS[@]}"; do
+    if [ -d "$dir" ]; then
+        echo "Cleaning metrics: $dir"
+        find "$dir" -type f -name "*.jsonl" -mtime +30 -delete 2>/dev/null || true
+    fi
+done
+
+echo "✅ Cleanup complete!"
+echo ""
+echo "Verifying Ray cluster status..."
+$PYTHON << 'EOF'
+import ray
+import sys
+
+try:
+    ray.init(ignore_reinit_error=True)
+    
+    # Check Ray cluster status
+    print("✓ Ray cluster is accessible")
+    
+    # Get cluster resources
+    resources = ray.cluster_resources()
+    print(f"  Cluster resources:")
+    for key, value in sorted(resources.items()):
+        if 'memory' in key.lower():
+            print(f"    {key}: {value / (1024**3):.2f} GB")
+        else:
+            print(f"    {key}: {value}")
+    
+    # Check if Ray Serve is running
+    from ray import serve
+    try:
+        serve.start(detached=True)
+        status = serve.status()
+        print(f"\n✓ Ray Serve status:")
+        print(f"  Proxies: {len(status.proxies) if hasattr(status, 'proxies') else 0}")
+        if hasattr(status, 'applications') and status.applications:
+            print(f"  Applications: {len(status.applications)}")
+            for app_name in status.applications.keys():
+                print(f"    - {app_name}")
+        else:
+            print(f"  Applications: 0 (none deployed)")
+    except Exception as e:
+        print(f"  Ray Serve: Not running ({e})")
+    
+    sys.exit(0)
+except Exception as e:
+    print(f"✗ Error verifying Ray: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+EOF
+
+echo ""
+echo "To restart Ray Serve, run: bash quick_start.sh"
