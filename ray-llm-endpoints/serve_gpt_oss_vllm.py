@@ -224,7 +224,7 @@ class GPTOSSEndpoint:
         prompt_parts.append("Assistant:")
         return "\n".join(prompt_parts)
     
-    async def _generate_stream(self, prompt: str, sampling_params: SamplingParams):
+    async def _generate_stream(self, prompt: str, sampling_params):
         """Generate streaming response"""
         # For streaming, we need to use async engine
         # This is a simplified version - for production, use AsyncLLMEngine

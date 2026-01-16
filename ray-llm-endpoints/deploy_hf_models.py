@@ -103,25 +103,28 @@ def main():
         print("   (Note: This requires disk space - check with: df -h)")
     
     # Start Ray Serve with HTTP options
+    # Always restart to ensure HTTP options are applied (like ray-endpoints does)
     RAY_SERVE_PORT = 8000  # Use 8000 (user prefers this port)
     try:
-        # Check if Serve is already running
-        try:
-            status = serve.status()
-            print(f"✅ Ray Serve is already running")
-            print(f"   Current applications: {len(status.applications) if hasattr(status, 'applications') else 'N/A'}")
-            # Restart Serve to ensure it's listening on 0.0.0.0
-            print(f"🔄 Restarting Ray Serve to ensure it's listening on 0.0.0.0:{RAY_SERVE_PORT}...")
-            serve.shutdown()
-            import time
-            time.sleep(1)  # Give it time to shutdown
-        except:
-            pass  # Serve not running, will start below
-        
-        # Start Serve with correct options
+        from ray.serve.config import HTTPOptions
+        # Always try to start with HTTP options (will fail if already running, that's OK)
         http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
-        serve.start(detached=True, http_options=http_options)
-        print(f"✅ Ray Serve started on 0.0.0.0:{RAY_SERVE_PORT}")
+        try:
+            serve.start(detached=True, http_options=http_options)
+            print(f"✅ Ray Serve started on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
+        except Exception as start_error:
+            # Serve might already be running - restart it to apply HTTP options
+            try:
+                status = serve.status()
+                print(f"🔄 Ray Serve is already running, restarting to apply HTTP options...")
+                serve.shutdown()
+                import time
+                time.sleep(2)  # Give it time to fully shutdown
+                serve.start(detached=True, http_options=http_options)
+                print(f"✅ Ray Serve restarted on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
+            except Exception as restart_error:
+                print(f"⚠️  Ray Serve setup issue: {restart_error}")
+                print(f"   Continuing anyway - Serve may already be configured correctly")
     except Exception as e:
         print(f"⚠️  Ray Serve setup issue: {e}")
         print(f"   Continuing anyway...")
