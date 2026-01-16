@@ -44,17 +44,30 @@ class TritonModelHandler:
     """Shared handler for Triton model inference (not decorated)"""
     
     def __init__(self, triton_url: str = TRITON_SERVER_URL):
-        """Initialize Triton client"""
-        self.client = tritonhttp.InferenceServerClient(url=triton_url)
+        """Initialize Triton client (lazy connection)"""
+        self.triton_url = triton_url
+        self.client = None
+        self._connected = False
+    
+    def _ensure_connected(self):
+        """Ensure Triton client is connected (lazy initialization)"""
+        if self._connected and self.client is not None:
+            return
+        
+        if self.client is None:
+            self.client = tritonhttp.InferenceServerClient(url=self.triton_url)
         
         # Verify Triton server is available
         try:
             if not self.client.is_server_live():
-                raise RuntimeError(f"Triton server at {triton_url} is not live")
+                raise RuntimeError(f"Triton server at {self.triton_url} is not live. Please start Triton server first.")
             if not self.client.is_server_ready():
-                raise RuntimeError(f"Triton server at {triton_url} is not ready")
+                raise RuntimeError(f"Triton server at {self.triton_url} is not ready. Please wait for it to initialize.")
+            self._connected = True
         except Exception as e:
-            raise RuntimeError(f"Failed to connect to Triton server: {e}")
+            self._connected = False
+            raise RuntimeError(f"Failed to connect to Triton server at {self.triton_url}: {e}. "
+                             f"Make sure Triton is running. See README for instructions.")
     
     def preprocess_image(self, image_data: bytes) -> np.ndarray:
         """Preprocess image for model input"""
@@ -85,6 +98,9 @@ class TritonModelHandler:
     
     def infer(self, model_name: str, image_data: bytes) -> Dict[str, Any]:
         """Perform inference on an image"""
+        # Ensure connection to Triton
+        self._ensure_connected()
+        
         # Preprocess image
         input_data = self.preprocess_image(image_data)
         

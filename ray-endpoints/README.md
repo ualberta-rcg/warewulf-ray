@@ -57,7 +57,20 @@ pip install -r requirements.txt
 /opt/ray/bin/python deploy.py
 ```
 
-3. Ensure Ray cluster is running:
+3. **Start Triton Inference Server** (required before deploying endpoints):
+```bash
+# Start Triton server (run in background or separate terminal)
+chmod +x start_triton.sh
+./start_triton.sh
+
+# Or run in background:
+nohup ./start_triton.sh > triton.log 2>&1 &
+
+# Check if Triton is running:
+curl http://localhost:8000/v2/health/live
+```
+
+4. Ensure Ray cluster is running:
 ```bash
 ray status
 # or
@@ -86,13 +99,27 @@ ray status
 
 ## Deployment
 
+**Prerequisites:**
+1. Triton server must be running (see Setup step 3)
+2. Ray cluster must be running
+3. Dependencies installed in Ray environment
+
 Deploy all endpoints:
 ```bash
-# Using wrapper script (recommended)
+# Using wrapper script (recommended - installs deps automatically)
 ./deploy.sh
 
 # Or using Ray's Python directly
 /opt/ray/bin/python deploy.py
+```
+
+**Note:** If you see "Triton server is not live" errors, make sure Triton is running:
+```bash
+# Check Triton status
+curl http://localhost:8000/v2/health/live
+
+# If not running, start it:
+./start_triton.sh
 ```
 
 Deploy specific endpoint:

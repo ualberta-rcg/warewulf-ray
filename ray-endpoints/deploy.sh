@@ -26,9 +26,13 @@ if ! "$RAY_PYTHON" -c "import ray" 2>/dev/null; then
 fi
 
 # Install dependencies if needed (in Ray's environment)
+# This ensures all Ray workers have the dependencies
 if [ -f "requirements.txt" ]; then
-    echo "📦 Installing/updating dependencies..."
-    "$RAY_PYTHON" -m pip install -q -r requirements.txt || true
+    echo "📦 Installing/updating dependencies in Ray environment..."
+    "$RAY_PYTHON" -m pip install --upgrade -q -r requirements.txt || {
+        echo "⚠️  Warning: Some dependencies may have failed to install"
+        echo "   This is OK if they're already installed"
+    }
 fi
 
 # Run the deployment script
