@@ -40,7 +40,6 @@ AVAILABLE_MODELS = [
 
 @serve.deployment(
     name="onnx_model_proxy",
-    route_prefix="/onnx",
     num_replicas=1,
 )
 class ONNXModelProxy:
@@ -170,7 +169,6 @@ class ONNXModelProxy:
 
 @serve.deployment(
     name="resnet50",
-    route_prefix="/resnet50",
     num_replicas=1,
 )
 class ResNet50Endpoint(ONNXModelProxy):
@@ -188,7 +186,6 @@ class ResNet50Endpoint(ONNXModelProxy):
 
 @serve.deployment(
     name="mobilenetv2",
-    route_prefix="/mobilenetv2",
     num_replicas=1,
 )
 class MobileNetV2Endpoint(ONNXModelProxy):
@@ -208,14 +205,14 @@ def deploy():
     print("📦 Deploying ONNX model endpoints...")
     
     # Deploy proxy endpoint
-    serve.run(ONNXModelProxy.bind(), name="onnx_model_proxy")
+    serve.run(ONNXModelProxy.bind(), name="onnx_model_proxy", route_prefix="/onnx")
     print("✅ Deployed ONNX model proxy at /onnx")
     
     # Deploy individual model endpoints
-    serve.run(ResNet50Endpoint.bind(), name="resnet50")
+    serve.run(ResNet50Endpoint.bind(), name="resnet50", route_prefix="/resnet50")
     print("✅ Deployed ResNet50 endpoint at /resnet50")
     
-    serve.run(MobileNetV2Endpoint.bind(), name="mobilenetv2")
+    serve.run(MobileNetV2Endpoint.bind(), name="mobilenetv2", route_prefix="/mobilenetv2")
     print("✅ Deployed MobileNetV2 endpoint at /mobilenetv2")
     
     print("✅ All ONNX model endpoints deployed!")

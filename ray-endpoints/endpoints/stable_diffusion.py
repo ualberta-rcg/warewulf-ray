@@ -19,7 +19,6 @@ STABLE_DIFFUSION_MODELS_DIR = "/data/models/stablediffusion"
 
 @serve.deployment(
     name="stable_diffusion",
-    route_prefix="/stable-diffusion",
     num_replicas=1,
 )
 class StableDiffusionEndpoint:
@@ -98,7 +97,7 @@ def deploy():
     print("🎨 Deploying Stable Diffusion endpoint...")
     
     try:
-        serve.run(StableDiffusionEndpoint.bind(), name="stable_diffusion")
+        serve.run(StableDiffusionEndpoint.bind(), name="stable_diffusion", route_prefix="/stable-diffusion")
         print("✅ Deployed Stable Diffusion endpoint at /stable-diffusion")
     except Exception as e:
         print(f"⚠️  Failed to deploy Stable Diffusion endpoint: {e}")
