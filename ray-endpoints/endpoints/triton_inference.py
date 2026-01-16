@@ -98,7 +98,11 @@ if os.path.exists("/cvmfs/soft.computecanada.ca/config/profile/bash.sh"):
 
 @serve.deployment(
     name="triton-inference",
-    ray_actor_options={"num_gpus": 1, "num_cpus": 4},
+    ray_actor_options={
+        "num_gpus": 1,
+        "num_cpus": 4,
+        "runtime_env": runtime_env,
+    },
     autoscaling_config=AutoscalingConfig(
         min_replicas=1,
         max_replicas=4,
@@ -108,7 +112,6 @@ if os.path.exists("/cvmfs/soft.computecanada.ca/config/profile/bash.sh"):
     ),
     health_check_period_s=10,
     health_check_timeout_s=30,
-    runtime_env=runtime_env,
 )
 @serve.ingress(app)
 class TritonInferenceDeployment:

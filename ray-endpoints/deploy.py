@@ -238,7 +238,7 @@ def deploy_all_endpoints():
             @serve.deployment(
                 name=endpoint_class.DEPLOYMENT_NAME,
                 autoscaling_config=autoscaling_config,
-                runtime_env=runtime_env,
+                ray_actor_options={"runtime_env": runtime_env},
             )
             class FastAPIDeployment:
                 def __init__(self):
@@ -375,7 +375,7 @@ def deploy_single_endpoint(endpoint_file: str):
     @serve.deployment(
         name=endpoint_class.DEPLOYMENT_NAME,
         autoscaling_config=autoscaling_config,
-        runtime_env=runtime_env,
+        ray_actor_options={"runtime_env": runtime_env},
     )
     class FastAPIDeployment:
         def __init__(self):
