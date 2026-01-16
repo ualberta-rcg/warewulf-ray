@@ -90,7 +90,7 @@ See the [Ray Serve Triton integration guide](https://docs.ray.io/en/latest/serve
 Update the `model_repository` path in each file to point to your actual model repository:
 
 ```python
-model_repository = "/data/models/Stable-diffusion"  # Change this
+model_repository = "/data/models/stablediffusion"  # Or "/data/ray-triton/model_repository" for Triton repo
 ```
 
 You can also use remote storage like S3:

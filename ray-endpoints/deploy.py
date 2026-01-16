@@ -2,9 +2,11 @@
 Deploy all discovered endpoints
 """
 from ray import serve
+import ray
 from ray.serve.deployment import Deployment
 from typing import List
 import sys
+import os
 from pathlib import Path
 
 # Handle both direct execution and module import
@@ -26,8 +28,45 @@ except ImportError:
     load_endpoint_from_file = loader.load_endpoint_from_file
     BaseEndpoint = base.BaseEndpoint
 
+def connect_to_ray():
+    """Connect to Ray cluster if RAY_ADDRESS is set, otherwise use existing connection"""
+    ray_address = os.environ.get("RAY_ADDRESS")
+    
+    if ray_address:
+        print(f"📡 Connecting to Ray cluster at {ray_address}...")
+        try:
+            # Check if already connected
+            if ray.is_initialized():
+                print("✓ Already connected to Ray")
+                return
+            
+            # Connect to remote cluster
+            ray.init(address=ray_address, ignore_reinit_error=True)
+            print(f"✓ Connected to Ray cluster at {ray_address}")
+        except Exception as e:
+            print(f"✗ Failed to connect to Ray cluster: {e}")
+            print("  Make sure the Ray cluster is running and accessible")
+            raise
+    else:
+        # Check if Ray is already initialized (from systemd service)
+        try:
+            if ray.is_initialized():
+                print("✓ Using existing Ray connection (from systemd service)")
+                return
+            # Try to connect to local Ray (should be running via systemd)
+            ray.init(ignore_reinit_error=True)
+            print("✓ Connected to local Ray")
+        except Exception as e:
+            print(f"⚠ Could not connect to Ray: {e}")
+            print("  Ray should be running via systemd service")
+            print("  Or set RAY_ADDRESS to connect to a remote cluster")
+            raise
+
 def deploy_all_endpoints():
     """Discover and deploy all endpoints"""
+    # Connect to Ray first (should already be running via systemd)
+    connect_to_ray()
+    
     print("Discovering endpoints...")
     endpoint_classes = discover_endpoints()
     
@@ -37,8 +76,11 @@ def deploy_all_endpoints():
     
     print(f"Found {len(endpoint_classes)} endpoints")
     
-    # Start Ray Serve
-    serve.start(detached=True)
+    # Start Ray Serve (will use existing Ray connection)
+    try:
+        serve.start(detached=True)
+    except Exception as e:
+        print(f"⚠ Ray Serve may already be running: {e}")
     
     deployments = []
     for endpoint_class in endpoint_classes:
@@ -82,9 +124,15 @@ def deploy_all_endpoints():
 
 def deploy_single_endpoint(endpoint_file: str):
     """Deploy a single endpoint from a file"""
+    # Connect to Ray first (should already be running via systemd)
+    connect_to_ray()
+    
     endpoint_class = load_endpoint_from_file(endpoint_file)
     
-    serve.start(detached=True)
+    try:
+        serve.start(detached=True)
+    except Exception as e:
+        print(f"⚠ Ray Serve may already be running: {e}")
     
     # Get autoscaling config (need to create instance temporarily)
     temp_instance = endpoint_class()

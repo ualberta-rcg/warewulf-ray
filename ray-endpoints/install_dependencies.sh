@@ -18,8 +18,11 @@ $PIP install Pillow
 echo "Installing numpy..."
 $PIP install numpy
 
+echo "Installing diffusers and torch (for direct model loading)..."
+$PIP install diffusers torch torchvision
+
 echo "Checking for tritonserver..."
-$PIP list | grep -i triton || echo "⚠ tritonserver not found - install nvidia-pytriton if needed"
+$PIP list | grep -i triton || echo "⚠ tritonserver not found - will use diffusers fallback"
 
 echo ""
 echo "✅ Dependencies installed!"

@@ -34,7 +34,7 @@ class StableDiffusionEndpoint(BaseEndpoint):
     
     def __init__(self):
         # Model paths
-        self.model_base_path = Path("/data/models/Stable-diffusion")
+        self.model_base_path = Path("/data/models/stablediffusion")
         self.metrics_path = Path("/var/log/ray/sd-metrics")
         self.metrics_path.mkdir(parents=True, exist_ok=True)
         
