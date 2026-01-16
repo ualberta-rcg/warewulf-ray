@@ -348,10 +348,9 @@ def deploy_all_endpoints():
             
             # If not using shared venv, add pip packages to runtime_env
             # This ensures dependencies are available on worker nodes
-            # Use working_dir to make the entire ray-endpoints directory available
-            # This ensures base.py and all other modules can be imported
+            # Note: working_dir only supports remote URIs, not local paths
+            # Since code is on shared NFS, we just need PYTHONPATH set correctly
             runtime_env_dict = {
-                "working_dir": str(ray_endpoints_dir),
                 "env_vars": {
                     "PYTHONPATH": ":".join(pythonpath_components),
                     "PATH": ":".join(path_components),
@@ -395,8 +394,7 @@ def deploy_all_endpoints():
                     
                     try:
                         # Ensure Python path is set for imports (critical for worker nodes)
-                        # The working_dir in runtime_env sets the working directory to ray-endpoints
-                        # So we can use the current working directory or the path from PYTHONPATH
+                        # PYTHONPATH is set in runtime_env to include ray-endpoints directory
                         import os
                         # Get ray-endpoints directory from PYTHONPATH (set in runtime_env)
                         pythonpath = os.environ.get("PYTHONPATH", "")
@@ -404,8 +402,18 @@ def deploy_all_endpoints():
                             # PYTHONPATH has ray-endpoints directory first
                             ray_endpoints_dir = Path(pythonpath.split(":")[0])
                         else:
-                            # Fallback: use current working directory (set by working_dir in runtime_env)
-                            ray_endpoints_dir = Path(os.getcwd())
+                            # Fallback: try common locations
+                            for possible_path in [
+                                "/root/warewulf-ray/ray-endpoints",
+                                "/data/ray-endpoints",
+                                Path(__file__).parent.absolute() if '__file__' in globals() else None,
+                            ]:
+                                if possible_path and Path(possible_path).exists():
+                                    ray_endpoints_dir = Path(possible_path)
+                                    break
+                            else:
+                                # Last resort: use current directory
+                                ray_endpoints_dir = Path(os.getcwd())
                         
                         # Add to sys.path if not already there
                         if str(ray_endpoints_dir) not in sys.path:
@@ -422,7 +430,14 @@ def deploy_all_endpoints():
                         except ImportError as e:
                             print(f"⚠ base module not importable: {e}")
                             print(f"   ray_endpoints_dir: {ray_endpoints_dir}")
-                            print(f"   sys.path: {sys.path[:3]}")
+                            print(f"   PYTHONPATH: {pythonpath}")
+                            print(f"   sys.path: {sys.path[:5]}")
+                            # Try to find base.py
+                            base_file = ray_endpoints_dir / "base.py"
+                            if base_file.exists():
+                                print(f"   base.py exists at: {base_file}")
+                            else:
+                                print(f"   base.py NOT found at: {base_file}")
                         
                         # Activate shared venv if available (NFS share)
                         if shared_venv_available:
