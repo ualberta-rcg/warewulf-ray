@@ -49,8 +49,13 @@ def deploy_all():
         print(f"⚠️  Stable Diffusion deployment skipped: {e}")
     
     print("✅ All endpoints deployed successfully!")
-    print(f"📊 Ray Dashboard: http://localhost:8265")
-    print(f"🌐 Ray Serve: http://localhost:8000")
+    try:
+        head_node_ip = ray.util.get_node_ip_address()
+        print(f"📊 Ray Dashboard: http://{head_node_ip}:8265")
+        print(f"🌐 Ray Serve: http://{head_node_ip}:8001 (Triton is on port 8000)")
+    except:
+        print(f"📊 Ray Dashboard: http://<head-node-ip>:8265")
+        print(f"🌐 Ray Serve: http://<head-node-ip>:8001 (Triton is on port 8000)")
 
 
 def deploy_specific(endpoint_name: str):
@@ -96,13 +101,16 @@ def main():
         sys.exit(1)
     
     # Start Ray Serve with HTTP options to listen on all interfaces
-    # Note: HTTP options can only be set when Serve is first started
+    # Note: Ray Serve uses port 8001 to avoid conflict with Triton (port 8000)
+    # HTTP options can only be set when Serve is first started
     # If Serve is already running, you need to restart it to change HTTP options
+    RAY_SERVE_PORT = 8001  # Use 8001 to avoid conflict with Triton on 8000
     try:
         from ray.serve.config import HTTPOptions
-        http_options = HTTPOptions(host="0.0.0.0", port=8000)
+        http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
         serve.start(detached=True, http_options=http_options)
-        print("✅ Ray Serve started on 0.0.0.0:8000 (accessible from network)")
+        print(f"✅ Ray Serve started on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
+        print(f"   Note: Triton is on port 8000, Ray Serve is on port {RAY_SERVE_PORT}")
     except Exception as e:
         # Serve might already be running - check if we can get status
         try:
@@ -113,7 +121,7 @@ def main():
         except:
             print(f"⚠️  Ray Serve may already be running: {e}")
             print("   If endpoints aren't accessible, you may need to restart Ray Serve")
-            print("   with HTTP options: serve.start(http_options=HTTPOptions(host='0.0.0.0', port=8000))")
+            print(f"   with HTTP options: serve.start(http_options=HTTPOptions(host='0.0.0.0', port={RAY_SERVE_PORT}))")
     
     # Deploy endpoints
     if args.endpoint:
@@ -154,21 +162,25 @@ def main():
         print("  Use 'ray serve status' to see all deployments")
     
     # Get head node IP for user
+    RAY_SERVE_PORT = 8001  # Match the port used above
     try:
         head_node_ip = ray.util.get_node_ip_address()
         print(f"\n🌐 Access endpoints at:")
-        print(f"   http://{head_node_ip}:8000/onnx")
-        print(f"   http://{head_node_ip}:8000/resnet50")
-        print(f"   http://{head_node_ip}:8000/mobilenetv2")
-        print(f"   http://{head_node_ip}:8000/stable-diffusion")
+        print(f"   http://{head_node_ip}:{RAY_SERVE_PORT}/onnx")
+        print(f"   http://{head_node_ip}:{RAY_SERVE_PORT}/resnet50")
+        print(f"   http://{head_node_ip}:{RAY_SERVE_PORT}/mobilenetv2")
+        print(f"   http://{head_node_ip}:{RAY_SERVE_PORT}/stable-diffusion")
+        print(f"\n   Triton: http://{head_node_ip}:8000 (model inference)")
+        print(f"   Ray Serve: http://{head_node_ip}:{RAY_SERVE_PORT} (HTTP API)")
         print(f"\n🧪 Test endpoints with:")
-        print(f"   chmod +x test_endpoints.sh && ./test_endpoints.sh")
+        print(f"   chmod +x test_endpoints.sh && HEAD_NODE_IP={head_node_ip} RAY_SERVE_PORT={RAY_SERVE_PORT} ./test_endpoints.sh")
         print(f"   Or use curl:")
-        print(f"   curl -X POST \"http://{head_node_ip}:8000/resnet50\" \\")
+        print(f"   curl -X POST \"http://{head_node_ip}:{RAY_SERVE_PORT}/resnet50\" \\")
         print(f"        -H \"Content-Type: image/jpeg\" \\")
         print(f"        --data-binary @boot.jpg")
     except:
-        print(f"\n🌐 Access endpoints at http://<head-node-ip>:8000")
+        print(f"\n🌐 Access endpoints at http://<head-node-ip>:8001")
+        print(f"   (Triton is on port 8000, Ray Serve is on port 8001)")
 
 
 if __name__ == "__main__":

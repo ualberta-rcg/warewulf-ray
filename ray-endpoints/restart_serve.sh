@@ -41,11 +41,13 @@ try:
 except Exception as e:
     print(f"⚠️  Error stopping Serve: {e}")
 
-# Start with HTTP options
-print("\nStarting Ray Serve with 0.0.0.0:8000...")
-http_options = HTTPOptions(host="0.0.0.0", port=8000)
+# Start with HTTP options (port 8001 to avoid conflict with Triton on 8000)
+RAY_SERVE_PORT = 8001
+print(f"\nStarting Ray Serve with 0.0.0.0:{RAY_SERVE_PORT}...")
+print("   (Triton is on port 8000, Ray Serve on port 8001)")
+http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
 serve.start(detached=True, http_options=http_options)
-print("✅ Ray Serve restarted on 0.0.0.0:8000")
+print(f"✅ Ray Serve restarted on 0.0.0.0:{RAY_SERVE_PORT}")
 
 # Show status
 time.sleep(1)
@@ -60,5 +62,6 @@ EOF
 rm -f /tmp/restart_serve.py
 
 echo ""
-echo "✅ Done! Ray Serve should now be accessible at http://<head-node-ip>:8000"
+echo "✅ Done! Ray Serve should now be accessible at http://<head-node-ip>:8001"
+echo "   (Triton is on port 8000, Ray Serve is on port 8001)"
 echo "   Now run: ./deploy.sh"

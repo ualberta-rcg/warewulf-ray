@@ -6,7 +6,7 @@ set -e
 
 # Get head node IP from Ray or use default
 HEAD_NODE_IP="${RAY_HEAD_NODE_IP:-172.26.92.232}"
-RAY_SERVE_PORT=8000
+RAY_SERVE_PORT="${RAY_SERVE_PORT:-8001}"  # Ray Serve on 8001, Triton on 8000
 DASHBOARD_PORT=8265
 
 echo "🔍 Checking Ray Serve Routes and Endpoints"

@@ -3,7 +3,7 @@
 # Tests if endpoints are accessible and responding
 
 HEAD_NODE_IP="${HEAD_NODE_IP:-172.26.92.232}"
-RAY_SERVE_PORT=8000
+RAY_SERVE_PORT="${RAY_SERVE_PORT:-8001}"  # Ray Serve on 8001, Triton on 8000
 IMAGE_FILE="${IMAGE_FILE:-boot.jpg}"
 
 echo "🧪 Testing Ray Serve Endpoints"

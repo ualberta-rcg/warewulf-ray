@@ -144,27 +144,27 @@ Deploy specific endpoint:
 
 Once deployed, endpoints will be available at:
 - Ray Serve Dashboard: `http://<head-node-ip>:8265`
-- Ray Serve API: `http://<head-node-ip>:8000`
+- Ray Serve API: `http://<head-node-ip>:8001` (Triton is on port 8000)
 
 ### Available Endpoints
 
 1. **Proxy Endpoint** (`/onnx`): Use any model via query parameter
    ```bash
-   curl -X POST "http://localhost:8000/onnx?model=resnet50" \
+   curl -X POST "http://<head-node-ip>:8001/onnx?model=resnet50" \
         -H "Content-Type: image/jpeg" \
         --data-binary @image.jpg
    ```
 
 2. **ResNet50 Endpoint** (`/resnet50`): Dedicated ResNet50 endpoint
    ```bash
-   curl -X POST "http://localhost:8000/resnet50" \
+   curl -X POST "http://<head-node-ip>:8001/resnet50" \
         -H "Content-Type: image/jpeg" \
         --data-binary @image.jpg
    ```
 
 3. **MobileNetV2 Endpoint** (`/mobilenetv2`): Dedicated MobileNetV2 endpoint
    ```bash
-   curl -X POST "http://localhost:8000/mobilenetv2" \
+   curl -X POST "http://<head-node-ip>:8001/mobilenetv2" \
         -H "Content-Type: image/jpeg" \
         --data-binary @image.jpg
    ```
@@ -179,13 +179,13 @@ chmod +x curl_examples.sh
 
 Or test manually:
 ```bash
-# Test ResNet50
-curl -X POST "http://localhost:8000/resnet50" \
+# Test ResNet50 (replace <head-node-ip> with your actual IP, e.g., 172.26.92.232)
+curl -X POST "http://<head-node-ip>:8001/resnet50" \
      -H "Content-Type: image/jpeg" \
      --data-binary @test_image.jpg
 
 # Test with proxy endpoint
-curl -X POST "http://localhost:8000/onnx?model=mobilenetv2" \
+curl -X POST "http://<head-node-ip>:8001/onnx?model=mobilenetv2" \
      -H "Content-Type: image/jpeg" \
      --data-binary @test_image.jpg
 ```
@@ -229,4 +229,7 @@ The check script will:
 Edit `config/triton_config.yaml` to configure Triton server settings.
 Edit `config/ray_config.yaml` to configure Ray Serve settings.
 
-**Note:** Ray Serve is configured to listen on `0.0.0.0:8000` so it's accessible from the network, not just localhost.
+**Note:** 
+- Ray Serve is configured to listen on `0.0.0.0:8001` (accessible from network, not localhost)
+- Triton server runs on port `8000`
+- All endpoints are accessible via the head node's IP address, not localhost
