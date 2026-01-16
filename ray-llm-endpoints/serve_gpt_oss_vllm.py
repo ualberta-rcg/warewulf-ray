@@ -67,16 +67,17 @@ class GPTOSSEndpoint:
                 # Try to install vllm using the Ray Python
                 ray_python = "/opt/ray/bin/python"
                 if os.path.exists(ray_python):
-                    print("   Installing vllm (this may take a few minutes)...")
+                    print("   Installing vllm...")
+                    print("   ⏳ This can take 10-20+ minutes (downloading and compiling)")
+                    print("   💡 Tip: Install manually on worker nodes to speed up:")
+                    print("      /opt/ray/bin/pip install vllm>=0.10.1")
+                    # Don't capture output so user can see pip progress
                     result = subprocess.run(
                         [ray_python, "-m", "pip", "install", "--upgrade", "vllm>=0.10.1"],
-                        capture_output=True,
-                        text=True,
-                        timeout=600  # 10 minute timeout
+                        timeout=1200  # 20 minute timeout (vllm can take a while)
                     )
                     if result.returncode != 0:
-                        print(f"   pip install stderr: {result.stderr}")
-                        raise RuntimeError(f"pip install failed: {result.stderr}")
+                        raise RuntimeError(f"pip install failed with return code {result.returncode}")
                     
                     # Reload vllm module
                     import importlib
@@ -104,10 +105,12 @@ class GPTOSSEndpoint:
         # Initialize vLLM engine
         # Note: This loads the model synchronously - for production, consider async loading
         try:
+            # Note: max_model_len should match the model's max_position_embeddings
+            # GPT-OSS-20B typically supports longer contexts, but start with 4096 to be safe
             self.llm = vllm_llm(
                 model=model_name,
                 tensor_parallel_size=1,  # Adjust for multi-GPU
-                max_model_len=32768,  # Adjust based on GPU memory
+                max_model_len=4096,  # Start with 4096, can increase if model supports it
             )
             print(f"✅ Model loaded: {model_name}")
         except Exception as e:

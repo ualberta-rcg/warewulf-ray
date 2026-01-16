@@ -75,19 +75,20 @@ class HuggingFaceLLMEndpoint:
                 # Try to install vllm using the Ray Python
                 ray_python = "/opt/ray/bin/python"
                 if os.path.exists(ray_python):
-                    print("   Installing vllm and dependencies (this may take a few minutes)...")
+                    print("   Installing vllm and dependencies...")
+                    print("   ⏳ This can take 10-20+ minutes (downloading and compiling)")
+                    print("   💡 Tip: Install manually on worker nodes to speed up:")
+                    print("      /opt/ray/bin/pip install vllm>=0.10.1 transformers>=4.30.0 torch>=2.0.0")
+                    # Don't capture output so user can see pip progress
                     result = subprocess.run(
                         [
                             ray_python, "-m", "pip", "install", "--upgrade", 
                             "vllm>=0.10.1", "transformers>=4.30.0", "torch>=2.0.0"
                         ],
-                        capture_output=True,
-                        text=True,
-                        timeout=600  # 10 minute timeout
+                        timeout=1200  # 20 minute timeout (vllm can take a while)
                     )
                     if result.returncode != 0:
-                        print(f"   pip install stderr: {result.stderr}")
-                        raise RuntimeError(f"pip install failed: {result.stderr}")
+                        raise RuntimeError(f"pip install failed with return code {result.returncode}")
                     
                     # Reload vllm module
                     import importlib
@@ -126,10 +127,12 @@ class HuggingFaceLLMEndpoint:
         # Note: This loads the model synchronously - for production, consider async loading
         try:
             # Configure vLLM with HuggingFace token if provided
+            # Note: max_model_len should match the model's max_position_embeddings
+            # DeepSeek-7B has max_position_embeddings=4096, so we use 4096 or less
             llm_kwargs = {
                 "model": model_name,
                 "tensor_parallel_size": 1,  # Adjust for multi-GPU
-                "max_model_len": 32768,  # Adjust based on GPU memory
+                "max_model_len": 4096,  # Match model's max_position_embeddings (DeepSeek-7B: 4096)
                 "trust_remote_code": True,  # For models that need custom code
                 "download_dir": "/data/models",  # Cache models on NFS
             }
