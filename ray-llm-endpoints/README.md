@@ -37,7 +37,21 @@ ray-llm-endpoints/
 
 ## Deployment
 
-### Quick Start
+### Option 1: Using vLLM Directly (Recommended - No ray.serve.llm needed)
+
+This approach uses vLLM directly with Ray Serve, avoiding the need for `ray.serve.llm`:
+
+```bash
+# Deploy GPT-OSS endpoint using vLLM directly
+/opt/ray/bin/python deploy_vllm.py
+
+# Or deploy specific model
+/opt/ray/bin/python deploy_vllm.py --model openai-community/gpt-oss-20b
+```
+
+### Option 2: Using Ray Serve LLM (Requires ray.serve.llm)
+
+If you have `ray.serve.llm` available (Ray 2.49.0+ with serve-llm extension):
 
 ```bash
 # Deploy GPT-OSS endpoint
@@ -46,6 +60,8 @@ ray-llm-endpoints/
 # Or deploy specific model
 ./deploy.sh --model gpt-oss-20b
 ```
+
+**Note:** If you get "ray.serve.llm not available", use Option 1 instead.
 
 ### Manual Deployment
 
