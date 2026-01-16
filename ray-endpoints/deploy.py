@@ -100,6 +100,18 @@ def main():
         print(f"❌ Failed to connect to Ray cluster: {e}")
         sys.exit(1)
     
+    # Note: Triton will be embedded in Ray Serve deployments if tritonserver Python API is available
+    # Otherwise, it will use HTTP client to connect to external Triton server
+    print("🔍 Checking Triton setup...")
+    try:
+        import tritonserver
+        print("✅ Triton Python API available - will use embedded Triton in deployments")
+        print("   (No separate Triton process needed)")
+    except ImportError:
+        print("⚠️  Triton Python API not available - will use HTTP client")
+        print("   (Triton server must be running separately on port 8000)")
+        print("   To use embedded Triton, install: pip install nvidia-pytriton")
+    
     # Start Ray Serve with HTTP options to listen on all interfaces
     # Note: Ray Serve uses port 8001 to avoid conflict with Triton (port 8000)
     # HTTP options can only be set when Serve is first started

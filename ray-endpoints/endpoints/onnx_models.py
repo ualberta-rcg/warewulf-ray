@@ -18,15 +18,19 @@ from PIL import Image
 import io
 import base64
 
-# Triton client imports
+# Triton imports - try Python API first (embedded), fallback to HTTP client
 try:
-    import tritonclient.http as tritonhttp
-    from tritonclient import http as httpclient
+    import tritonserver
+    TRITON_PYTHON_API_AVAILABLE = True
 except ImportError:
-    raise ImportError("tritonclient not installed. Install with: pip install tritonclient[all]")
+    TRITON_PYTHON_API_AVAILABLE = False
+    try:
+        import tritonclient.http as tritonhttp
+        from tritonclient import http as httpclient
+    except ImportError:
+        raise ImportError("Neither tritonserver nor tritonclient available. Install with: pip install nvidia-pytriton or tritonclient[all]")
 
 # Configuration
-TRITON_SERVER_URL = "localhost:8000"  # Triton server URL
 MODEL_REPOSITORY = "/data/ray-triton/model_repository"
 
 # Available ONNX models
@@ -43,31 +47,44 @@ AVAILABLE_MODELS = [
 class TritonModelHandler:
     """Shared handler for Triton model inference (not decorated)"""
     
-    def __init__(self, triton_url: str = TRITON_SERVER_URL):
-        """Initialize Triton client (lazy connection)"""
-        self.triton_url = triton_url
+    def __init__(self, use_embedded_triton: bool = True):
+        """Initialize Triton - use embedded server if available, else HTTP client"""
+        self.use_embedded = use_embedded_triton and TRITON_PYTHON_API_AVAILABLE
+        self.triton_server = None
         self.client = None
-        self._connected = False
+        self._initialized = False
     
-    def _ensure_connected(self):
-        """Ensure Triton client is connected (lazy initialization)"""
-        if self._connected and self.client is not None:
+    def _ensure_initialized(self):
+        """Ensure Triton is initialized (lazy initialization)"""
+        if self._initialized:
             return
         
-        if self.client is None:
-            self.client = tritonhttp.InferenceServerClient(url=self.triton_url)
-        
-        # Verify Triton server is available
-        try:
-            if not self.client.is_server_live():
-                raise RuntimeError(f"Triton server at {self.triton_url} is not live. Please start Triton server first.")
-            if not self.client.is_server_ready():
-                raise RuntimeError(f"Triton server at {self.triton_url} is not ready. Please wait for it to initialize.")
-            self._connected = True
-        except Exception as e:
-            self._connected = False
-            raise RuntimeError(f"Failed to connect to Triton server at {self.triton_url}: {e}. "
-                             f"Make sure Triton is running. See README for instructions.")
+        if self.use_embedded:
+            # Use embedded Triton server (starts inside Ray Serve deployment)
+            # Following official Ray docs: https://docs.ray.io/en/latest/serve/tutorials/triton-server-integration.html
+            if self.triton_server is None:
+                # model_repository can be a string or list
+                self.triton_server = tritonserver.Server(
+                    model_repository=[MODEL_REPOSITORY],  # Use list as per Ray docs
+                    model_control_mode=tritonserver.ModelControlMode.EXPLICIT,
+                    log_info=False,
+                )
+                self.triton_server.start(wait_until_ready=True)
+                print(f"✅ Embedded Triton server started with models from {MODEL_REPOSITORY}")
+            self._initialized = True
+        else:
+            # Fallback to HTTP client (external Triton server)
+            if self.client is None:
+                self.client = tritonhttp.InferenceServerClient(url="localhost:8000")
+            
+            try:
+                if not self.client.is_server_live():
+                    raise RuntimeError("Triton server at localhost:8000 is not live. Please start Triton server first.")
+                if not self.client.is_server_ready():
+                    raise RuntimeError("Triton server at localhost:8000 is not ready.")
+                self._initialized = True
+            except Exception as e:
+                raise RuntimeError(f"Failed to connect to Triton server: {e}. Make sure Triton is running.")
     
     def preprocess_image(self, image_data: bytes) -> np.ndarray:
         """Preprocess image for model input"""
@@ -98,36 +115,76 @@ class TritonModelHandler:
     
     def infer(self, model_name: str, image_data: bytes) -> Dict[str, Any]:
         """Perform inference on an image"""
-        # Ensure connection to Triton
-        self._ensure_connected()
+        # Ensure Triton is initialized
+        self._ensure_initialized()
         
         # Preprocess image
         input_data = self.preprocess_image(image_data)
         
-        # Prepare Triton inputs
-        inputs = [
-            httpclient.InferInput("data", input_data.shape, "FP32")
-        ]
-        inputs[0].set_data_from_numpy(input_data)
-        
-        # Perform inference
-        outputs = [
-            httpclient.InferRequestedOutput("fc6")
-        ]
-        
-        response = self.client.infer(model_name, inputs, outputs=outputs)
-        
-        # Get predictions
-        predictions = response.as_numpy("fc6")
-        predicted_class = int(np.argmax(predictions[0]))
-        confidence = float(np.max(predictions[0]))
-        
-        return {
-            "model": model_name,
-            "predicted_class": predicted_class,
-            "confidence": confidence,
-            "predictions": predictions[0].tolist()[:10]  # Top 10
-        }
+        if self.use_embedded:
+            # Use embedded Triton Python API (following Ray docs pattern)
+            # Check if model is ready, load if needed
+            if not self.triton_server.model(model_name).ready():
+                self.triton_server.load(model_name)
+            
+            model = self.triton_server.model(model_name)
+            
+            # Perform inference - input name is typically "data" for ONNX models
+            # Format: inputs={"input_name": [[batch_data]]}
+            # Note: The double list is for batching - outer list is batch dimension
+            predictions = None
+            for response in model.infer(inputs={"data": [[input_data]]}):
+                # Get output - ONNX models typically have output named "fc6" or similar
+                # Try common output names first
+                output_names = list(response.outputs.keys())
+                if not output_names:
+                    raise RuntimeError("No outputs found in Triton response")
+                
+                # Try "fc6" first (common for classification models), then first available
+                output_name = "fc6" if "fc6" in output_names else output_names[0]
+                output_tensor = response.outputs[output_name]
+                
+                # Convert from DLPack to numpy (as per Ray docs)
+                predictions = np.from_dlpack(output_tensor).squeeze()
+            
+            if predictions is None:
+                raise RuntimeError("No predictions received from Triton")
+            
+            # Handle prediction shape - should be 1D array of class probabilities
+            if predictions.ndim > 1:
+                predictions = predictions.flatten()
+            
+            predicted_class = int(np.argmax(predictions))
+            confidence = float(np.max(predictions))
+            
+            return {
+                "model": model_name,
+                "predicted_class": predicted_class,
+                "confidence": confidence,
+                "predictions": predictions.tolist()[:10]
+            }
+        else:
+            # Use HTTP client (external Triton)
+            inputs = [
+                httpclient.InferInput("data", input_data.shape, "FP32")
+            ]
+            inputs[0].set_data_from_numpy(input_data)
+            
+            outputs = [
+                httpclient.InferRequestedOutput("fc6")
+            ]
+            
+            response = self.client.infer(model_name, inputs, outputs=outputs)
+            predictions = response.as_numpy("fc6")
+            predicted_class = int(np.argmax(predictions[0]))
+            confidence = float(np.max(predictions[0]))
+            
+            return {
+                "model": model_name,
+                "predicted_class": predicted_class,
+                "confidence": confidence,
+                "predictions": predictions[0].tolist()[:10]
+            }
 
 
 @serve.deployment(

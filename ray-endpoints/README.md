@@ -60,16 +60,16 @@ pip install -r requirements.txt
 /opt/ray/bin/python deploy.py
 ```
 
-3. **Start Triton Inference Server** (required before deploying endpoints):
+3. **Triton Inference Server** (automatically embedded in deployments):
 ```bash
-# Start Triton server (run in background or separate terminal)
+# Triton is now embedded directly in Ray Serve deployments (no separate process needed!)
+# If nvidia-pytriton is installed, Triton will start automatically in each deployment
+# 
+# If you need to use external Triton (fallback mode), start it manually:
 chmod +x start_triton.sh
 ./start_triton.sh
 
-# Or run in background:
-nohup ./start_triton.sh > triton.log 2>&1 &
-
-# Check if Triton is running:
+# Check if external Triton is running:
 curl http://localhost:8000/v2/health/live
 ```
 
@@ -103,9 +103,11 @@ ray status
 ## Deployment
 
 **Prerequisites:**
-1. Triton server must be running (see Setup step 3)
-2. Ray cluster must be running
-3. Dependencies installed in Ray environment
+1. Ray cluster must be running
+2. Dependencies installed in Ray environment
+3. **Triton is embedded in deployments** - no separate Triton process needed!
+   - If `nvidia-pytriton` is installed, Triton starts automatically in each deployment
+   - If not available, will fallback to HTTP client (requires external Triton on port 8000)
 
 Deploy all endpoints:
 ```bash
@@ -116,14 +118,9 @@ Deploy all endpoints:
 /opt/ray/bin/python deploy.py
 ```
 
-**Note:** If you see "Triton server is not live" errors, make sure Triton is running:
-```bash
-# Check Triton status
-curl http://localhost:8000/v2/health/live
-
-# If not running, start it:
-./start_triton.sh
-```
+**Note:** 
+- **Embedded Mode (Recommended)**: If `nvidia-pytriton` is installed, Triton runs embedded in each Ray Serve deployment - no separate process needed!
+- **External Mode (Fallback)**: If embedded mode isn't available, endpoints will connect to external Triton on port 8000. Start it with `./start_triton.sh`
 
 **Note:** Ray Serve is configured to listen on `0.0.0.0:8000` for network access. If you need to restart Ray Serve with these settings:
 ```bash
@@ -231,5 +228,8 @@ Edit `config/ray_config.yaml` to configure Ray Serve settings.
 
 **Note:** 
 - Ray Serve is configured to listen on `0.0.0.0:8001` (accessible from network, not localhost)
-- Triton server runs on port `8000`
+- **Triton is embedded in deployments** (no separate port needed when using embedded mode)
+- If using external Triton, it runs on port `8000`
 - All endpoints are accessible via the head node's IP address, not localhost
+- Based on official Ray documentation: [Serving models with Triton Server in Ray Serve](https://docs.ray.io/en/latest/serve/tutorials/triton-server-integration.html)
+- Also see: [NVIDIA's Ray Serve + Triton example](https://github.com/triton-inference-server/tutorials/blob/main/Triton_Inference_Server_Python_API/examples/rayserve/tritonserver_deployment.py)

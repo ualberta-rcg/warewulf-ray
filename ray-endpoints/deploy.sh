@@ -37,6 +37,9 @@ if [ -f "requirements.txt" ]; then
     }
 fi
 
+# Install requests if needed (for Triton health check)
+"$RAY_PYTHON" -m pip install -q requests 2>/dev/null || true
+
 # Run the deployment script
 echo "🚀 Deploying Ray Serve endpoints..."
 "$RAY_PYTHON" deploy.py "$@"
