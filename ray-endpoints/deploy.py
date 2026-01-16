@@ -114,6 +114,22 @@ def deploy_all_endpoints():
     # Connect to Ray first (should already be running via systemd)
     connect_to_ray()
     
+    # Check for shared venv and activate it BEFORE discovery
+    # This ensures dependency checks during discovery use the venv
+    shared_venv_path = "/data/ray-endpoints-venv"
+    use_shared_venv = os.path.exists(shared_venv_path) and os.path.exists(f"{shared_venv_path}/bin/python")
+    
+    if use_shared_venv:
+        # Add venv to sys.path BEFORE loading endpoints
+        venv_site_packages = f"{shared_venv_path}/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+        if os.path.exists(venv_site_packages) and venv_site_packages not in sys.path:
+            sys.path.insert(0, venv_site_packages)
+        # Also update PATH for subprocess calls
+        venv_bin = f"{shared_venv_path}/bin"
+        if venv_bin not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = f"{venv_bin}:{os.environ.get('PATH', '')}"
+        print(f"✓ Using shared venv for discovery: {shared_venv_path}")
+    
     print("Discovering endpoints...")
     endpoint_classes = discover_endpoints()
     

@@ -105,11 +105,23 @@ model_repository = "s3://bucket-name/models"
 - Each replica runs its own Triton Server instance
 - GPU resources are allocated per replica (`num_gpus: 1`)
 
-## Triton Server Location
+## Triton Server Binary Location
 
 When using PyTriton (embedded mode), the Triton Server binary is located at:
 ```
 /opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver
 ```
 
-This is automatically used by PyTriton when you import `tritonserver` in Python. You don't need to call this binary directly - PyTriton handles it automatically.
+**Note**: The exact path depends on your Python version. For Python 3.12, it's in the path above. For other versions, adjust the `python3.12` part accordingly (e.g., `python3.11` for Python 3.11).
+
+This binary is automatically used by PyTriton when you import `tritonserver` in Python. In `triton_inference.py`, we explicitly reference this path to start the server as a subprocess.
+
+To verify the location on your system:
+```bash
+find /opt/ray -name "tritonserver" -type f 2>/dev/null
+```
+
+If the binary is not found, PyTriton may not be installed. Install it with:
+```bash
+/opt/ray/bin/pip install pytriton
+```
