@@ -4,15 +4,20 @@
 
 set -e
 
-echo "🔄 Restarting Ray Serve with network access (0.0.0.0:8000)..."
+echo "🔄 Restarting Ray Serve with network access (0.0.0.0:8001)..."
 echo "⚠️  This will stop all currently deployed endpoints!"
 echo "   You'll need to run ./deploy.sh again after this."
 echo ""
-read -p "Continue? (y/N) " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Cancelled."
-    exit 1
+# Auto-confirm if running non-interactively (for scripts)
+if [ -t 0 ]; then
+    read -p "Continue? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        exit 1
+    fi
+else
+    echo "Non-interactive mode - proceeding automatically..."
 fi
 
 # Use Ray's Python

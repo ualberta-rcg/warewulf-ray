@@ -104,13 +104,18 @@ def main():
     # Otherwise, it will use HTTP client to connect to external Triton server
     print("🔍 Checking Triton setup...")
     try:
+        # Try importing tritonserver - this should work if nvidia-pytriton is installed
+        import sys
+        # Check in the current Python environment (Ray's Python)
         import tritonserver
         print("✅ Triton Python API available - will use embedded Triton in deployments")
         print("   (No separate Triton process needed)")
-    except ImportError:
+    except ImportError as e:
         print("⚠️  Triton Python API not available - will use HTTP client")
+        print(f"   Import error: {e}")
         print("   (Triton server must be running separately on port 8000)")
-        print("   To use embedded Triton, install: pip install nvidia-pytriton")
+        print("   To use embedded Triton, install in Ray's environment:")
+        print("   /opt/ray/bin/pip install nvidia-pytriton")
     
     # Start Ray Serve with HTTP options to listen on all interfaces
     # Note: Ray Serve uses port 8001 to avoid conflict with Triton (port 8000)
