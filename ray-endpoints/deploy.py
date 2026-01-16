@@ -324,7 +324,12 @@ def deploy_all_endpoints():
             
             # Build PATH with shared venv if available
             path_components = [os.environ.get("PATH", "")]
-            pythonpath_components = [str(ray_endpoints_dir)]
+            # Add both ray-endpoints directory and endpoints subdirectory to PYTHONPATH
+            # This ensures base.py and endpoint modules can be imported
+            pythonpath_components = [
+                str(ray_endpoints_dir),
+                str(ray_endpoints_dir / "endpoints"),
+            ]
             
             if use_shared_venv:
                 path_components.insert(0, f"{shared_venv_path}/bin")
@@ -343,7 +348,10 @@ def deploy_all_endpoints():
             
             # If not using shared venv, add pip packages to runtime_env
             # This ensures dependencies are available on worker nodes
+            # Use working_dir to make the entire ray-endpoints directory available
+            # This ensures base.py and all other modules can be imported
             runtime_env_dict = {
+                "working_dir": str(ray_endpoints_dir),
                 "env_vars": {
                     "PYTHONPATH": ":".join(pythonpath_components),
                     "PATH": ":".join(path_components),
@@ -387,9 +395,34 @@ def deploy_all_endpoints():
                     
                     try:
                         # Ensure Python path is set for imports (critical for worker nodes)
-                        ray_endpoints_dir = Path(__file__).parent.parent.absolute()
+                        # The working_dir in runtime_env sets the working directory to ray-endpoints
+                        # So we can use the current working directory or the path from PYTHONPATH
+                        import os
+                        # Get ray-endpoints directory from PYTHONPATH (set in runtime_env)
+                        pythonpath = os.environ.get("PYTHONPATH", "")
+                        if pythonpath:
+                            # PYTHONPATH has ray-endpoints directory first
+                            ray_endpoints_dir = Path(pythonpath.split(":")[0])
+                        else:
+                            # Fallback: use current working directory (set by working_dir in runtime_env)
+                            ray_endpoints_dir = Path(os.getcwd())
+                        
+                        # Add to sys.path if not already there
                         if str(ray_endpoints_dir) not in sys.path:
                             sys.path.insert(0, str(ray_endpoints_dir))
+                        # Also add endpoints subdirectory
+                        endpoints_dir = ray_endpoints_dir / "endpoints"
+                        if str(endpoints_dir) not in sys.path:
+                            sys.path.insert(0, str(endpoints_dir))
+                        
+                        # Verify base module can be imported
+                        try:
+                            import base
+                            print(f"✓ base module available at: {base.__file__}")
+                        except ImportError as e:
+                            print(f"⚠ base module not importable: {e}")
+                            print(f"   ray_endpoints_dir: {ray_endpoints_dir}")
+                            print(f"   sys.path: {sys.path[:3]}")
                         
                         # Activate shared venv if available (NFS share)
                         if shared_venv_available:
