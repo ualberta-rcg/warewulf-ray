@@ -212,7 +212,6 @@ def main():
                 status = serve.status()
                 print(f"🔄 Ray Serve is already running, restarting to apply HTTP options...")
                 serve.shutdown()
-                import time
                 time.sleep(2)  # Give it time to fully shutdown
                 serve.start(detached=True, http_options=http_options)
                 print(f"✅ Ray Serve restarted on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
