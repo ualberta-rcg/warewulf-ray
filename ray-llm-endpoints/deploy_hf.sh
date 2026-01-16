@@ -33,10 +33,10 @@ if [ -z "$HF_TOKEN" ]; then
     echo "   Or pass --hf-token to deploy_hf_models.py"
 fi
 
-# Model names (default: DeepSeek-7B and another model)
-# Note: GPT-OSS models don't exist on HuggingFace, using a different model
+# Model names (default: DeepSeek-7B and Mistral-7B)
+# Both are public models that don't require gated access
 MODEL1="${MODEL1:-deepseek-ai/deepseek-llm-7b-chat}"
-MODEL2="${MODEL2:-meta-llama/Llama-2-7b-chat-hf}"  # Changed from non-existent GPT-OSS
+MODEL2="${MODEL2:-mistralai/Mistral-7B-Instruct-v0.1}"  # Public model, no token needed
 
 # Check if user wants to deploy both models
 DEPLOY_BOTH="${DEPLOY_BOTH:-true}"

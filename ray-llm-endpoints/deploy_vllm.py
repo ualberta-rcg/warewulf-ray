@@ -60,8 +60,8 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="meta-llama/Llama-2-7b-chat-hf",
-        help="Model to deploy (HuggingFace model ID, default: meta-llama/Llama-2-7b-chat-hf)",
+        default="mistralai/Mistral-7B-Instruct-v0.1",
+        help="Model to deploy (HuggingFace model ID, default: mistralai/Mistral-7B-Instruct-v0.1)",
     )
     parser.add_argument(
         "--hf-token",

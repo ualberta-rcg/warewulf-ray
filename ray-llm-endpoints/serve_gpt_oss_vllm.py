@@ -48,7 +48,7 @@ except ImportError:
 class GPTOSSEndpoint:
     """GPT-OSS endpoint using vLLM directly"""
     
-    def __init__(self, model_name: str = "meta-llama/Llama-2-7b-chat-hf"):
+    def __init__(self, model_name: str = "mistralai/Mistral-7B-Instruct-v0.1"):
         """Initialize vLLM engine"""
         import sys
         import subprocess
@@ -114,6 +114,7 @@ class GPTOSSEndpoint:
                 tensor_parallel_size=1,  # Adjust for multi-GPU
                 max_model_len=4096,  # Start with 4096, can increase if model supports it
                 enforce_eager=True,  # Disable torch.compile (avoids Python.h requirement)
+                download_dir="/data/models",  # Cache models on NFS
             )
             print(f"✅ Model loaded: {model_name}")
         except Exception as e:
@@ -254,7 +255,7 @@ class GPTOSSEndpoint:
 
 
 # Create deployment
-def create_app(model_name: str = "meta-llama/Llama-2-7b-chat-hf"):
+def create_app(model_name: str = "mistralai/Mistral-7B-Instruct-v0.1"):
     """Create the GPT-OSS application"""
     return GPTOSSEndpoint.bind(model_name=model_name)
 
