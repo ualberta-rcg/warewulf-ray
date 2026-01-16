@@ -7,6 +7,7 @@ import os
 import asyncio
 import time
 import psutil
+import threading
 from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -117,38 +118,52 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             self.vllm_sampling_params_class = vllm_sampling_params
             
             self.model_name = model_name
+            self.max_model_len = max_model_len
             # model_loaded is already set to False at the start of __init__
             self.hf_token = hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-            print(f"🚀 Loading model: {model_name}")
-            print(f"   Max context length: {max_model_len}")
+            self.llm = None  # Initialize as None - will be loaded in background
             
             # Set HuggingFace token if provided
             if self.hf_token:
                 os.environ["HF_TOKEN"] = self.hf_token
                 os.environ["HUGGING_FACE_HUB_TOKEN"] = self.hf_token
             
-            # Initialize vLLM engine
-            # Note: This loads the model synchronously - for production, consider async loading
-            try:
-                # Configure vLLM with HuggingFace token if provided
-                # enforce_eager=True disables torch.compile which requires Python dev headers
-                llm_kwargs = {
-                    "model": model_name,
-                    "tensor_parallel_size": 1,  # Adjust for multi-GPU
-                    "max_model_len": max_model_len,  # Configurable per model
-                    "trust_remote_code": True,  # For models that need custom code
-                    "download_dir": "/data/models",  # Cache models on NFS
-                    "enforce_eager": True,  # Disable torch.compile (avoids Python.h requirement)
-                }
-                
-                # Set HuggingFace token for authentication
-                if self.hf_token:
-                    llm_kwargs["token"] = self.hf_token
-                
-                # Use the stored LLM class
-                self.llm = self.vllm_llm_class(**llm_kwargs)
-                self.model_loaded = True
-                print(f"✅ Model loaded: {model_name}")
+            # Load model in background thread so __init__ returns quickly
+            # This allows handler to respond immediately with 202 while model loads
+            def load_model():
+                try:
+                    print(f"🚀 Loading model in background: {model_name}")
+                    print(f"   Max context length: {max_model_len}")
+                    # Configure vLLM with HuggingFace token if provided
+                    # enforce_eager=True disables torch.compile which requires Python dev headers
+                    llm_kwargs = {
+                        "model": model_name,
+                        "tensor_parallel_size": 1,  # Adjust for multi-GPU
+                        "max_model_len": max_model_len,  # Configurable per model
+                        "trust_remote_code": True,  # For models that need custom code
+                        "download_dir": "/data/models",  # Cache models on NFS
+                        "enforce_eager": True,  # Disable torch.compile (avoids Python.h requirement)
+                    }
+                    
+                    # Set HuggingFace token for authentication
+                    if self.hf_token:
+                        llm_kwargs["token"] = self.hf_token
+                    
+                    # Use the stored LLM class
+                    self.llm = self.vllm_llm_class(**llm_kwargs)
+                    self.model_loaded = True
+                    print(f"✅ Model loaded: {model_name}")
+                except Exception as e:
+                    print(f"❌ Failed to load model: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    self.model_loaded = False
+            
+            # Start loading in background thread (non-blocking)
+            loading_thread = threading.Thread(target=load_model, daemon=True)
+            loading_thread.start()
+            print(f"⏳ Model loading started in background for: {model_name}")
+            print(f"   Handler will respond with 202 (poll) until model is ready")
             except Exception as e:
                 print(f"❌ Failed to load model: {e}")
                 import traceback
@@ -204,34 +219,40 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             })
         
         async def handle_chat_completions(self, request: Request) -> Any:
-            """Handle chat completion requests with FIFO queuing and scale-to-zero polling"""
+            """Handle chat completion requests with scale-to-zero polling (no queuing)"""
             try:
-                # Check if model is loaded (scale-to-zero handling)
-                # This check happens immediately when the handler is called
-                # If model isn't loaded yet, Ray Serve is still initializing the replica
-                # Return 202 (Accepted) immediately - allows FIFO queuing while scaling
-                if not hasattr(self, 'model_loaded') or not self.model_loaded:
-                    # Check if we have the llm object (model might be loading)
-                    if not hasattr(self, 'llm') or self.llm is None:
-                        # Model is definitely not ready - return poll response immediately
-                        # Requests will queue in FIFO order while model scales up
-                        return JSONResponse(
-                            {
-                                "status": "scaling_up",
-                                "message": "The model is currently scaling up from zero. Your request is queued (FIFO). Please poll this endpoint or retry.",
-                                "model": self.model_name,
-                                "estimated_ready_time_seconds": 60,
-                                "retry_after": 60,
-                                "poll_url": str(request.url),  # Same URL to poll
-                                "queue_position": "processing"  # Request is queued
-                            },
-                            status_code=202,  # Accepted - processing (allows FIFO queuing)
-                            headers={
-                                "Retry-After": "60",  # HTTP standard for retry timing
-                                "X-Status": "scaling-up",  # Custom header for status
-                                "X-Queue-Status": "queued"  # Indicates request is queued
-                            }
-                        )
+                # IMMEDIATE check if model is ready (scale-to-zero handling)
+                # Check both the flag and the actual llm object
+                # This must happen BEFORE any model operations
+                model_ready = (
+                    hasattr(self, 'model_loaded') and 
+                    self.model_loaded and 
+                    hasattr(self, 'llm') and 
+                    self.llm is not None
+                )
+                
+                if not model_ready:
+                    # Model is NOT ready - return poll response IMMEDIATELY
+                    # NO QUEUING - client must poll/retry later
+                    # This prevents request accumulation when scaled to zero
+                    return JSONResponse(
+                        {
+                            "status": "scaling_up",
+                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60 seconds. Your request was not queued - please retry when ready.",
+                            "model": getattr(self, 'model_name', 'unknown'),
+                            "estimated_ready_time_seconds": 60,
+                            "retry_after": 60,
+                            "poll_url": str(request.url),  # Same URL to poll
+                            "action": "retry_later"  # Client should retry, not wait for queue
+                        },
+                        status_code=202,  # Accepted - but no queuing, client must retry
+                        headers={
+                            "Retry-After": "60",  # HTTP standard for retry timing
+                            "X-Status": "scaling-up",  # Custom header for status
+                            "X-Action": "retry-later",  # Client should retry, not wait
+                            "Content-Type": "application/json"
+                        }
+                    )
                 
                 # Start timing
                 query_start_time = time.time()
