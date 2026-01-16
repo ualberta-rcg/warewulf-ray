@@ -40,6 +40,7 @@ except ImportError:
             ],
             "env_vars": {
                 "VLLM_USE_MODELSCOPE": "False",
+                "HF_TOKEN": os.environ.get("HF_TOKEN", ""),  # Pass HF token via env
             }
         }
     }
@@ -47,7 +48,7 @@ except ImportError:
 class GPTOSSEndpoint:
     """GPT-OSS endpoint using vLLM directly"""
     
-    def __init__(self, model_name: str = "openai-community/gpt-oss-20b"):
+    def __init__(self, model_name: str = "meta-llama/Llama-2-7b-chat-hf"):
         """Initialize vLLM engine"""
         import sys
         import subprocess
@@ -144,12 +145,13 @@ class GPTOSSEndpoint:
     
     async def handle_models(self, request: Request) -> JSONResponse:
         """List available models"""
+        model_id = self.model_name.replace("/", "-")
         return JSONResponse({
             "data": [{
-                "id": "my-gpt-oss",
+                "id": model_id,
                 "object": "model",
                 "created": 0,
-                "owned_by": "openai"
+                "owned_by": "huggingface"
             }]
         })
     
@@ -186,7 +188,7 @@ class GPTOSSEndpoint:
                     "id": "chatcmpl-123",
                     "object": "chat.completion",
                     "created": 0,
-                    "model": "my-gpt-oss",
+                    "model": self.model_name.replace("/", "-"),
                     "choices": [{
                         "index": 0,
                         "message": {
@@ -238,7 +240,7 @@ class GPTOSSEndpoint:
                 "id": "chatcmpl-123",
                 "object": "chat.completion.chunk",
                 "created": 0,
-                "model": "my-gpt-oss",
+                "model": self.model_name.replace("/", "-"),
                 "choices": [{
                     "index": 0,
                     "delta": {"content": word + " "},
@@ -252,7 +254,7 @@ class GPTOSSEndpoint:
 
 
 # Create deployment
-def create_app(model_name: str = "openai-community/gpt-oss-20b"):
+def create_app(model_name: str = "meta-llama/Llama-2-7b-chat-hf"):
     """Create the GPT-OSS application"""
     return GPTOSSEndpoint.bind(model_name=model_name)
 

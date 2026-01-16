@@ -133,14 +133,27 @@ def main():
     try:
         deploy_hf_llm(model_name=args.model, hf_token=hf_token)
         
-        print("\n📊 Deployment Summary:")
-        print(f"   Model: {args.model}")
-        print(f"   Endpoint: http://<head-node-ip>:{RAY_SERVE_PORT}/v1")
-        print(f"   Model name: {args.model.replace('/', '-')}")
-        print(f"\n📝 Example usage:")
-        print(f"   curl http://<head-node-ip>:{RAY_SERVE_PORT}/v1/chat/completions \\")
-        print(f"     -H 'Content-Type: application/json' \\")
-        print(f"     -d '{{\"model\": \"{args.model.replace('/', '-')}\", \"messages\": [{{\"role\": \"user\", \"content\": \"Hello!\"}}]}}'")
+        # Get head node IP for user
+        try:
+            head_node_ip = ray.util.get_node_ip_address()
+            print("\n📊 Deployment Summary:")
+            print(f"   Model: {args.model}")
+            print(f"   Endpoint: http://{head_node_ip}:{RAY_SERVE_PORT}/v1")
+            print(f"   Model name: {args.model.replace('/', '-')}")
+            print(f"\n📝 Example usage:")
+            print(f"   curl http://{head_node_ip}:{RAY_SERVE_PORT}/v1/chat/completions \\")
+            print(f"     -H 'Content-Type: application/json' \\")
+            print(f"     -d '{{\"model\": \"{args.model.replace('/', '-')}\", \"messages\": [{{\"role\": \"user\", \"content\": \"Hello!\"}}]}}'")
+        except:
+            print("\n📊 Deployment Summary:")
+            print(f"   Model: {args.model}")
+            print(f"   Endpoint: http://<head-node-ip>:{RAY_SERVE_PORT}/v1")
+            print(f"   Model name: {args.model.replace('/', '-')}")
+            print(f"\n📝 Example usage:")
+            print(f"   curl http://<head-node-ip>:{RAY_SERVE_PORT}/v1/chat/completions \\")
+            print(f"     -H 'Content-Type: application/json' \\")
+            print(f"     -d '{{\"model\": \"{args.model.replace('/', '-')}\", \"messages\": [{{\"role\": \"user\", \"content\": \"Hello!\"}}]}}'")
+        
         print(f"\n💡 Note: Model will be downloaded from HuggingFace on first use")
         print(f"   This requires disk space and network access to huggingface.co")
         if hf_token:

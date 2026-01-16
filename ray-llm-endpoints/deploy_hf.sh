@@ -33,9 +33,10 @@ if [ -z "$HF_TOKEN" ]; then
     echo "   Or pass --hf-token to deploy_hf_models.py"
 fi
 
-# Model names (default: DeepSeek-7B and GPT-OSS-20B)
+# Model names (default: DeepSeek-7B and another model)
+# Note: GPT-OSS models don't exist on HuggingFace, using a different model
 MODEL1="${MODEL1:-deepseek-ai/deepseek-llm-7b-chat}"
-MODEL2="${MODEL2:-openai-community/gpt-oss-20b}"
+MODEL2="${MODEL2:-meta-llama/Llama-2-7b-chat-hf}"  # Changed from non-existent GPT-OSS
 
 # Check if user wants to deploy both models
 DEPLOY_BOTH="${DEPLOY_BOTH:-true}"
@@ -43,7 +44,7 @@ DEPLOY_BOTH="${DEPLOY_BOTH:-true}"
 if [ "$DEPLOY_BOTH" = "true" ]; then
     echo "🚀 Deploying both HuggingFace LLM models..."
     echo "   Model 1: $MODEL1 (DeepSeek-7B)"
-    echo "   Model 2: $MODEL2 (GPT-OSS-20B)"
+    echo "   Model 2: $MODEL2"
     if [ -n "$HF_TOKEN" ]; then
         echo "   Using HuggingFace token"
     fi
@@ -59,17 +60,19 @@ if [ "$DEPLOY_BOTH" = "true" ]; then
     # Wait a bit for first deployment to complete
     sleep 2
     
-    # Deploy second model (GPT-OSS) on /v2 route
+    # Deploy second model (same route, different model name)
     echo ""
     echo "📦 Deploying Model 2: $MODEL2..."
-    "$RAY_PYTHON" deploy_vllm.py \
+    "$RAY_PYTHON" deploy_hf_models.py \
         --model "$MODEL2" \
+        ${HF_TOKEN:+--hf-token "$HF_TOKEN"} \
         "$@"
     
     echo ""
     echo "✅ Both models deployed!"
-    echo "   DeepSeek-7B: http://<head-node-ip>:8000/v1"
-    echo "   GPT-OSS-20B: http://<head-node-ip>:8000/v1 (model: my-gpt-oss)"
+    echo "   Both models share the /v1 endpoint - specify model name in request:"
+    echo "   - Model 1: $(echo $MODEL1 | sed 's/\//-/g')"
+    echo "   - Model 2: $(echo $MODEL2 | sed 's/\//-/g')"
 else
     # Single model deployment (backward compatible)
     MODEL_NAME="${MODEL_NAME:-$MODEL1}"

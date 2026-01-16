@@ -49,9 +49,10 @@ def deploy_gpt_oss(model_name: str = "openai-community/gpt-oss-20b"):
         route_prefix="/v1",  # OpenAI-compatible API endpoint (shared with other models)
     )
     
-    print(f"✅ GPT-OSS endpoint deployed successfully!")
+    model_id = model_name.replace("/", "-")
+    print(f"✅ LLM endpoint deployed successfully!")
     print(f"   OpenAI API: http://<head-node-ip>:8000/v1")
-    print(f"   Model name: my-gpt-oss")
+    print(f"   Model name: {model_id}")
 
 
 def main():
@@ -59,8 +60,14 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="openai-community/gpt-oss-20b",
-        help="Model to deploy (HuggingFace model ID, default: openai-community/gpt-oss-20b)",
+        default="meta-llama/Llama-2-7b-chat-hf",
+        help="Model to deploy (HuggingFace model ID, default: meta-llama/Llama-2-7b-chat-hf)",
+    )
+    parser.add_argument(
+        "--hf-token",
+        type=str,
+        default=None,
+        help="HuggingFace token for private models (or set HF_TOKEN env var)",
     )
     parser.add_argument(
         "--address",
@@ -70,6 +77,9 @@ def main():
     )
     
     args = parser.parse_args()
+    
+    # Get HF token from arg or environment
+    hf_token = args.hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     
     # Initialize Ray connection
     try:
@@ -120,16 +130,31 @@ def main():
     
     # Deploy the endpoint
     try:
-        deploy_gpt_oss(model_name=args.model)
+        deploy_gpt_oss(model_name=args.model, hf_token=hf_token)
         
-        print("\n📊 Deployment Summary:")
-        print(f"   Model: {args.model}")
-        print(f"   Endpoint: http://<head-node-ip>:{RAY_SERVE_PORT}/v1")
-        print(f"   Model name: my-gpt-oss")
-        print(f"\n📝 Example usage:")
-        print(f"   curl http://<head-node-ip>:{RAY_SERVE_PORT}/v1/chat/completions \\")
-        print(f"     -H 'Content-Type: application/json' \\")
-        print(f"     -d '{{\"model\": \"my-gpt-oss\", \"messages\": [{{\"role\": \"user\", \"content\": \"Hello!\"}}]}}'")
+        # Get head node IP for user
+        try:
+            head_node_ip = ray.util.get_node_ip_address()
+            model_id = args.model.replace("/", "-")
+            print("\n📊 Deployment Summary:")
+            print(f"   Model: {args.model}")
+            print(f"   Endpoint: http://{head_node_ip}:{RAY_SERVE_PORT}/v1")
+            print(f"   Model name: {model_id}")
+            print(f"\n📝 Example usage:")
+            print(f"   curl http://{head_node_ip}:{RAY_SERVE_PORT}/v1/chat/completions \\")
+            print(f"     -H 'Content-Type: application/json' \\")
+            print(f"     -d '{{\"model\": \"{model_id}\", \"messages\": [{{\"role\": \"user\", \"content\": \"Hello!\"}}]}}'")
+        except:
+            model_id = args.model.replace("/", "-")
+            print("\n📊 Deployment Summary:")
+            print(f"   Model: {args.model}")
+            print(f"   Endpoint: http://<head-node-ip>:{RAY_SERVE_PORT}/v1")
+            print(f"   Model name: {model_id}")
+            print(f"\n📝 Example usage:")
+            print(f"   curl http://<head-node-ip>:{RAY_SERVE_PORT}/v1/chat/completions \\")
+            print(f"     -H 'Content-Type: application/json' \\")
+            print(f"     -d '{{\"model\": \"{model_id}\", \"messages\": [{{\"role\": \"user\", \"content\": \"Hello!\"}}]}}'")
+        
         print(f"\n💡 Note: Model will be downloaded from HuggingFace on first use")
         print(f"   This requires disk space and network access to huggingface.co")
         
