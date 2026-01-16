@@ -37,8 +37,7 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             "downscale_delay_s": 300,  # Wait 5 minutes before scaling down to zero
             "upscale_delay_s": 0,  # Scale up immediately when request arrives
         },
-        max_queued_requests=1,  # Only queue 1 request while scaling up
-        max_concurrent_queries=1,  # Limit concurrent queries
+        # No max_queued_requests limit - allow FIFO queuing while scaling
         ray_actor_options={
             "num_gpus": 1,  # Adjust based on your GPU setup
             "runtime_env": {
@@ -205,24 +204,34 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             })
         
         async def handle_chat_completions(self, request: Request) -> Any:
-            """Handle chat completion requests"""
+            """Handle chat completion requests with FIFO queuing and scale-to-zero polling"""
             try:
                 # Check if model is loaded (scale-to-zero handling)
                 # This check happens immediately when the handler is called
                 # If model isn't loaded yet, Ray Serve is still initializing the replica
+                # Return 202 (Accepted) immediately - allows FIFO queuing while scaling
                 if not hasattr(self, 'model_loaded') or not self.model_loaded:
-                    # Return immediate response - model is scaling up
-                    return JSONResponse(
-                        {
-                            "error": "Model is scaling up",
-                            "message": "The model is currently scaling up from zero. Please retry in approximately 60 seconds.",
-                            "status": "scaling_up",
-                            "estimated_ready_time": 60,
-                            "retry_after": 60
-                        },
-                        status_code=202,  # Accepted - processing
-                        headers={"Retry-After": "60"}  # HTTP standard for retry timing
-                    )
+                    # Check if we have the llm object (model might be loading)
+                    if not hasattr(self, 'llm') or self.llm is None:
+                        # Model is definitely not ready - return poll response immediately
+                        # Requests will queue in FIFO order while model scales up
+                        return JSONResponse(
+                            {
+                                "status": "scaling_up",
+                                "message": "The model is currently scaling up from zero. Your request is queued (FIFO). Please poll this endpoint or retry.",
+                                "model": self.model_name,
+                                "estimated_ready_time_seconds": 60,
+                                "retry_after": 60,
+                                "poll_url": str(request.url),  # Same URL to poll
+                                "queue_position": "processing"  # Request is queued
+                            },
+                            status_code=202,  # Accepted - processing (allows FIFO queuing)
+                            headers={
+                                "Retry-After": "60",  # HTTP standard for retry timing
+                                "X-Status": "scaling-up",  # Custom header for status
+                                "X-Queue-Status": "queued"  # Indicates request is queued
+                            }
+                        )
                 
                 # Start timing
                 query_start_time = time.time()
