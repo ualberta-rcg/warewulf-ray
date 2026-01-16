@@ -109,6 +109,66 @@ def connect_to_ray():
             print("  Example: export RAY_ADDRESS=172.26.92.232:6379")
             raise
 
+def check_and_install_dependencies():
+    """Check for required dependencies and install if missing"""
+    shared_venv_path = "/data/ray-endpoints-venv"
+    use_shared_venv = os.path.exists(shared_venv_path) and os.path.exists(f"{shared_venv_path}/bin/pip")
+    
+    # Determine which pip to use
+    if use_shared_venv:
+        pip_cmd = f"{shared_venv_path}/bin/pip"
+        python_cmd = f"{shared_venv_path}/bin/python"
+        venv_name = "shared venv"
+    else:
+        pip_cmd = "/opt/ray/bin/pip"
+        python_cmd = "/opt/ray/bin/python"
+        venv_name = "Ray venv"
+        if not os.path.exists(pip_cmd):
+            print("⚠ No pip found (neither shared venv nor Ray venv)")
+            print("  Dependencies may not be available")
+            return False
+    
+    # Check for required packages
+    required_packages = {
+        "fastapi": "fastapi",
+        "uvicorn": "uvicorn",
+        "diffusers": "diffusers",
+        "torch": "torch",
+    }
+    
+    missing_packages = []
+    for package_name, pip_name in required_packages.items():
+        try:
+            # Try importing to check if available
+            __import__(package_name)
+        except ImportError:
+            missing_packages.append(pip_name)
+    
+    if missing_packages:
+        print(f"📦 Installing missing dependencies into {venv_name}...")
+        print(f"   Missing: {', '.join(missing_packages)}")
+        try:
+            import subprocess
+            # Install missing packages
+            result = subprocess.run(
+                [pip_cmd, "install", "--quiet"] + missing_packages,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+            if result.returncode == 0:
+                print(f"✓ Installed dependencies into {venv_name}")
+                return True
+            else:
+                print(f"⚠ Failed to install some dependencies: {result.stderr}")
+                return False
+        except Exception as e:
+            print(f"⚠ Error installing dependencies: {e}")
+            return False
+    else:
+        print(f"✓ All required dependencies available in {venv_name}")
+        return True
+
 def deploy_all_endpoints():
     """Discover and deploy all endpoints"""
     # Connect to Ray first (should already be running via systemd)
@@ -121,14 +181,32 @@ def deploy_all_endpoints():
     
     if use_shared_venv:
         # Add venv to sys.path BEFORE loading endpoints
-        venv_site_packages = f"{shared_venv_path}/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
-        if os.path.exists(venv_site_packages) and venv_site_packages not in sys.path:
+        # Try multiple Python version path formats
+        venv_site_packages = None
+        for py_ver in [
+            f"python{sys.version_info.major}.{sys.version_info.minor}",
+            f"{sys.version_info.major}.{sys.version_info.minor}",
+            f"{sys.version_info.major}{sys.version_info.minor}",
+        ]:
+            candidate = f"{shared_venv_path}/lib/{py_ver}/site-packages"
+            if os.path.exists(candidate):
+                venv_site_packages = candidate
+                break
+        
+        if venv_site_packages and venv_site_packages not in sys.path:
             sys.path.insert(0, venv_site_packages)
+        elif not venv_site_packages:
+            print(f"⚠ Could not find site-packages in shared venv (Python {sys.version_info.major}.{sys.version_info.minor})")
+        
         # Also update PATH for subprocess calls
         venv_bin = f"{shared_venv_path}/bin"
         if venv_bin not in os.environ.get("PATH", ""):
             os.environ["PATH"] = f"{venv_bin}:{os.environ.get('PATH', '')}"
         print(f"✓ Using shared venv for discovery: {shared_venv_path}")
+    else:
+        # If no shared venv, check and install dependencies into Ray venv
+        print("⚠ Shared venv not found, checking Ray venv for dependencies...")
+        check_and_install_dependencies()
     
     print("Discovering endpoints...")
     endpoint_classes = discover_endpoints()
@@ -203,8 +281,22 @@ def deploy_all_endpoints():
     for endpoint_class in endpoint_classes:
         try:
             # Get autoscaling config (need to create instance temporarily, but don't keep it)
-            temp_instance = endpoint_class()
-            autoscaling_config = temp_instance.get_autoscaling_config()
+            # This might fail if dependencies are missing, but that's okay - we'll catch it
+            try:
+                temp_instance = endpoint_class()
+                autoscaling_config = temp_instance.get_autoscaling_config()
+            except Exception as e:
+                print(f"⚠ Could not create temporary instance of {endpoint_class.DEPLOYMENT_NAME}: {e}")
+                print(f"   This might be due to missing dependencies. Continuing anyway...")
+                # Use default autoscaling config
+                from ray.serve.config import AutoscalingConfig
+                autoscaling_config = AutoscalingConfig(
+                    min_replicas=0,
+                    max_replicas=5,
+                    target_num_ongoing_requests_per_replica=1,
+                    downscale_delay_s=60,
+                    upscale_delay_s=0,
+                )
             
             # Wrap FastAPI app in a Ray Serve deployment class
             # Create endpoint and app INSIDE __init__ to avoid serialization issues
@@ -238,7 +330,7 @@ def deploy_all_endpoints():
                 path_components.insert(0, f"{shared_venv_path}/bin")
                 # Add venv site-packages to PYTHONPATH
                 # Try to find the correct Python version path
-                import sys
+                # sys is already imported at module level
                 for py_ver in [
                     f"python{sys.version_info.major}.{sys.version_info.minor}",
                     f"{sys.version_info.major}.{sys.version_info.minor}",
@@ -249,16 +341,35 @@ def deploy_all_endpoints():
                         pythonpath_components.insert(0, candidate)
                         break
             
-            runtime_env = {
+            # If not using shared venv, add pip packages to runtime_env
+            # This ensures dependencies are available on worker nodes
+            runtime_env_dict = {
                 "env_vars": {
                     "PYTHONPATH": ":".join(pythonpath_components),
                     "PATH": ":".join(path_components),
                 },
-                # Add pip packages if needed (uncomment and add packages)
-                # Note: If using shared venv, install packages there instead:
-                # /data/ray-endpoints-venv/bin/pip install package_name
-                # "pip": ["psutil", "requests"],  # Only use if NOT using shared venv
             }
+            
+            # Only add pip packages if NOT using shared venv
+            # (shared venv should be on NFS and accessible to all workers)
+            if not use_shared_venv:
+                # Add essential packages via pip in runtime_env
+                # This installs them on each worker (less efficient but works)
+                runtime_env_dict["pip"] = [
+                    "fastapi",
+                    "uvicorn",
+                    "diffusers",
+                    "torch",
+                    "torchvision",
+                    "Pillow",
+                    "numpy",
+                ]
+                print(f"  ⚠ Using runtime_env pip (shared venv not available)")
+                print(f"     Packages will be installed on each worker node")
+            else:
+                print(f"  ✓ Using shared venv (no runtime_env pip needed)")
+            
+            runtime_env = runtime_env_dict
             
             # Store modules list and venv info for use in __init__
             modules_to_load = compute_canada_modules
@@ -323,6 +434,15 @@ def deploy_all_endpoints():
                                     print(f"  ✓ fastapi available: {fastapi.__version__}")
                                 except ImportError as e:
                                     print(f"  ⚠ fastapi not available: {e}")
+                                    print(f"     Install with: {shared_venv_path}/bin/pip install fastapi")
+                                
+                                # Check for other critical packages
+                                for pkg in ["diffusers", "torch"]:
+                                    try:
+                                        __import__(pkg)
+                                        print(f"  ✓ {pkg} available")
+                                    except ImportError:
+                                        print(f"  ⚠ {pkg} not available - install with: {shared_venv_path}/bin/pip install {pkg}")
                                 
                             except Exception as e:
                                 print(f"⚠ Could not use shared venv: {e}")
@@ -339,6 +459,17 @@ def deploy_all_endpoints():
                                 print(f"✓ Loaded Compute Canada modules: {modules_to_load}")
                             except Exception as e:
                                 print(f"⚠ Could not load Compute Canada modules: {e}")
+                        
+                        # Verify fastapi is available before creating endpoint
+                        try:
+                            import fastapi
+                        except ImportError:
+                            raise ImportError(
+                                "fastapi not available. Install with:\n"
+                                "  /data/ray-endpoints-venv/bin/pip install fastapi (if using shared venv)\n"
+                                "  /opt/ray/bin/pip install fastapi (if using Ray venv)\n"
+                                "  Or run: bash install_dependencies.sh"
+                            )
                         
                         # Create endpoint instance and app here (on worker side)
                         # This avoids serialization issues with FastAPI's thread locks
