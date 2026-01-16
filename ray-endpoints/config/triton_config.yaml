@@ -1,0 +1,20 @@
+# Triton Inference Server Configuration
+# This file contains configuration for Triton server settings
+
+triton:
+  server_url: "localhost:8000"
+  model_repository: "/data/ray-triton/model_repository"
+  model_cache: "/data/ray-triton/model_cache"
+  
+  # Server settings
+  grpc_port: 8001
+  http_port: 8000
+  metrics_port: 8002
+  
+  # Model settings
+  strict_model_config: false
+  exit_on_error: false
+  
+  # Performance settings
+  max_batch_size: 128
+  instance_group_count: 1
