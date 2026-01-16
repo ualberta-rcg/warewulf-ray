@@ -161,6 +161,12 @@ def main():
         print(f"   http://{head_node_ip}:8000/resnet50")
         print(f"   http://{head_node_ip}:8000/mobilenetv2")
         print(f"   http://{head_node_ip}:8000/stable-diffusion")
+        print(f"\n🧪 Test endpoints with:")
+        print(f"   chmod +x test_endpoints.sh && ./test_endpoints.sh")
+        print(f"   Or use curl:")
+        print(f"   curl -X POST \"http://{head_node_ip}:8000/resnet50\" \\")
+        print(f"        -H \"Content-Type: image/jpeg\" \\")
+        print(f"        --data-binary @boot.jpg")
     except:
         print(f"\n🌐 Access endpoints at http://<head-node-ip>:8000")
 
