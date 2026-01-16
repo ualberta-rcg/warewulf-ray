@@ -14,7 +14,7 @@ This indicates a stale/failed deployment in Ray Serve. Here's how to fix it:
 1. **Clean up stale deployments:**
    ```bash
    cd ~/warewulf-ray/ray-endpoints
-   /opt/ray/bin/python cleanup_serve.py
+   bash cleanup_ray_serve.sh
    ```
 
 2. **Redeploy endpoints:**

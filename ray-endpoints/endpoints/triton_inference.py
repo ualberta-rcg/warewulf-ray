@@ -1,41 +1,36 @@
+#!/usr/bin/env python3
 """
-Triton Inference Server deployment with API key authentication and resource logging
-Based on start-triton.py
+Deploy Triton Inference Server on Ray cluster with:
+- API key authentication
+- Resource usage logging
+- Auto-scaling
+- Multi-model support
 """
+
 import time
 import logging
 import subprocess
 import psutil
 import json
-import sys
-from pathlib import Path
-
-# Handle imports - ensure we can find base if needed
-try:
-    from ..base import BaseEndpoint
-except ImportError:
-    # If relative import fails, add parent to path and import
-    _parent = Path(__file__).parent.parent
-    if str(_parent) not in sys.path:
-        sys.path.insert(0, str(_parent))
-    from base import BaseEndpoint
-
+import ray
+from ray import serve
 from fastapi import FastAPI, HTTPException, Request, Depends, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional
 import numpy as np
-from ray import serve
-from ray.serve.config import AutoscalingConfig
+
+# Initialize Ray
+#ray.init(address="auto")
 
 # Setup logging
-LOG_DIR = Path("/data/logs")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR = "/data/logs"
+subprocess.run(["mkdir", "-p", LOG_DIR], check=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(message)s",
     handlers=[
-        logging.FileHandler(str(LOG_DIR / "triton_usage.log")),
+        logging.FileHandler(f"{LOG_DIR}/triton_usage.log"),
         logging.StreamHandler()
     ]
 )
@@ -61,91 +56,19 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Setup runtime environment for dependencies
-import os
-from pathlib import Path
-
-# Get ray-endpoints directory for PYTHONPATH
-ray_endpoints_dir = Path(__file__).parent.parent.absolute()
-
-# Check for shared venv on NFS (more efficient than installing on each worker)
-shared_venv_path = "/data/ray-endpoints-venv"
-use_shared_venv = os.path.exists(shared_venv_path) and os.path.exists(f"{shared_venv_path}/bin/python")
-
-# Build PATH with shared venv if available
-path_components = [os.environ.get("PATH", "")]
-if use_shared_venv:
-    path_components.insert(0, f"{shared_venv_path}/bin")
-
-# Runtime environment - ensures dependencies are available on worker nodes
-runtime_env = {
-    "env_vars": {
-        "PYTHONPATH": str(ray_endpoints_dir),
-        "PATH": ":".join(path_components),
-    },
-    # Add pip packages if needed (uncomment and add)
-    # Note: If using shared venv, install packages there instead:
-    # /data/ray-endpoints-venv/bin/pip install package_name
-    # "pip": ["psutil", "requests", "numpy"],  # Only use if NOT using shared venv
-}
-
-# Support Compute Canada modules
-compute_canada_modules = []
-if os.path.exists("/cvmfs/soft.computecanada.ca/config/profile/bash.sh"):
-    # Compute Canada modules available - add modules here if needed
-    # Example: compute_canada_modules = ["python/3.12", "cuda/12.0", "cudnn/8.9"]
-    pass
-
 @serve.deployment(
-    name="triton-inference",
-    ray_actor_options={
-        "num_gpus": 1,
-        "num_cpus": 4,
-        "runtime_env": runtime_env,
+    ray_actor_options={"num_gpus": 1, "num_cpus": 4},
+    autoscaling_config={
+        "min_replicas": 1,
+        "max_replicas": 4,
+        "target_ongoing_requests": 10,
     },
-    autoscaling_config=AutoscalingConfig(
-        min_replicas=1,
-        max_replicas=4,
-        target_num_ongoing_requests_per_replica=10,
-        downscale_delay_s=300,  # Keep alive longer
-        upscale_delay_s=0,
-    ),
     health_check_period_s=10,
-    health_check_timeout_s=30,
+    health_check_timeout_s=30
 )
 @serve.ingress(app)
 class TritonInferenceDeployment:
     def __init__(self, model_repo_path: str = "/data/ray-triton/model_repository"):
-        # Ensure Python path is set (important for worker nodes)
-        import sys
-        if str(ray_endpoints_dir) not in sys.path:
-            sys.path.insert(0, str(ray_endpoints_dir))
-        
-        # Activate shared venv if available (NFS share)
-        if use_shared_venv:
-            try:
-                # Add venv to sys.path
-                venv_site_packages = f"{shared_venv_path}/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
-                if os.path.exists(venv_site_packages) and venv_site_packages not in sys.path:
-                    sys.path.insert(0, venv_site_packages)
-                logger.info(f"Using shared venv from NFS: {shared_venv_path}")
-            except Exception as e:
-                logger.warning(f"Could not use shared venv: {e}")
-        
-        # Load Compute Canada modules if specified
-        if compute_canada_modules:
-            try:
-                import subprocess
-                # Source the module system
-                subprocess.run(
-                    ["bash", "-c", "source /cvmfs/soft.computecanada.ca/config/profile/bash.sh && " + 
-                     " && ".join([f"module load {m}" for m in compute_canada_modules])],
-                    check=True
-                )
-                logger.info(f"Loaded Compute Canada modules: {compute_canada_modules}")
-            except Exception as e:
-                logger.warning(f"Could not load Compute Canada modules: {e}")
-        
         self.model_repo_path = model_repo_path
         self.process = None
         self.triton_http_port = 8001
@@ -179,14 +102,9 @@ class TritonInferenceDeployment:
 
     def start_triton_server(self):
         """Start Triton server as subprocess"""
-        triton_binary = "/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver"
-        
-        if not Path(triton_binary).exists():
-            raise FileNotFoundError(f"Triton server binary not found at {triton_binary}")
-        
         self.process = subprocess.Popen(
             [
-                triton_binary,
+                "/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver",
                 "--model-repository", self.model_repo_path,
                 "--http-port", str(self.triton_http_port),
                 "--grpc-port", str(self.triton_grpc_port),
@@ -220,15 +138,79 @@ class TritonInferenceDeployment:
         raise TimeoutError("Triton server failed to become ready")
 
     def load_model_catalog(self):
-        """Load model catalog if available"""
-        catalog_path = Path(self.model_repo_path) / "model_catalog.json"
+        """Load model catalog if available, or auto-discover ONNX models"""
+        catalog_path = f"{self.model_repo_path}/model_catalog.json"
         try:
             with open(catalog_path, 'r') as f:
                 self.model_catalog = json.load(f)
-            logger.info(f"Loaded model catalog with {len(self.model_catalog['models'])} models")
+            logger.info(f"Loaded model catalog with {len(self.model_catalog.get('models', []))} models")
         except:
-            self.model_catalog = None
-            logger.warning("No model catalog found")
+            # Auto-discover models in repository
+            self.model_catalog = self.discover_models()
+            if self.model_catalog:
+                logger.info(f"Auto-discovered {len(self.model_catalog.get('models', []))} models in repository")
+            else:
+                logger.warning("No model catalog found and no models discovered")
+    
+    def discover_models(self):
+        """Auto-discover ONNX and other models in the repository"""
+        import os
+        from pathlib import Path
+        
+        models = []
+        repo_path = Path(self.model_repo_path)
+        
+        if not repo_path.exists():
+            logger.warning(f"Model repository not found: {self.model_repo_path}")
+            return None
+        
+        # Scan repository for model directories
+        for model_dir in repo_path.iterdir():
+            if not model_dir.is_dir():
+                continue
+            
+            model_name = model_dir.name
+            config_file = model_dir / "config.pbtxt"
+            version_dir = model_dir / "1"
+            
+            # Check if it's a valid Triton model directory
+            if not config_file.exists():
+                continue
+            
+            # Determine model type by checking for model files
+            model_type = "unknown"
+            model_files = []
+            
+            if version_dir.exists():
+                for model_file in version_dir.iterdir():
+                    if model_file.is_file():
+                        model_files.append(model_file.name)
+                        ext = model_file.suffix.lower()
+                        if ext == ".onnx":
+                            model_type = "onnx"
+                        elif ext in [".plan", ".engine"]:
+                            model_type = "tensorrt"
+                        elif ext == ".pt" or ext == ".pth":
+                            model_type = "pytorch"
+                        elif ext == ".pb":
+                            model_type = "tensorflow"
+            
+            models.append({
+                "name": model_name,
+                "type": model_type,
+                "path": str(model_dir),
+                "files": model_files,
+                "has_config": config_file.exists()
+            })
+        
+        if models:
+            return {
+                "models": models,
+                "repository_path": str(repo_path),
+                "discovery_method": "auto"
+            }
+        
+        return None
 
     def get_gpu_info(self):
         """Get GPU information"""
@@ -305,18 +287,35 @@ class TritonInferenceDeployment:
 
     @app.get("/v2/models")
     async def list_models(self, user: str = Depends(verify_api_key)):
-        """List all available models"""
+        """List all available models from Triton Server"""
         import requests
         try:
+            # Get models from Triton Server
             response = requests.get(f"http://localhost:{self.triton_http_port}/v2/models")
-            models = response.json()
+            if response.status_code == 200:
+                triton_models = response.json()
+            else:
+                triton_models = []
+            
+            # Combine with discovered catalog
             return {
                 "user": user,
-                "models": models,
-                "catalog": self.model_catalog
+                "triton_models": triton_models,
+                "discovered_catalog": self.model_catalog,
+                "repository_path": self.model_repo_path,
+                "total_models": len(triton_models) if isinstance(triton_models, list) else 0
             }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error(f"Error listing models: {e}")
+            # Return discovered catalog even if Triton is not responding
+            return {
+                "user": user,
+                "triton_models": [],
+                "discovered_catalog": self.model_catalog,
+                "repository_path": self.model_repo_path,
+                "error": str(e),
+                "note": "Triton server may not be ready yet"
+            }
 
     @app.post("/v2/models/{model_name}/infer")
     async def infer(
@@ -366,28 +365,24 @@ class TritonInferenceDeployment:
             self.process.terminate()
             self.process.wait(timeout=10)
 
+# Deploy
+MODEL_REPO = "/data/ray-triton/model_repository"
 
-if __name__ == "__main__":
-    # Deploy the deployment
-    print("🚀 Deploying Triton Inference Server...")
-    
-    MODEL_REPO = "/data/ray-triton/model_repository"
-    
-    deployment = TritonInferenceDeployment.bind(MODEL_REPO)
-    serve.run(deployment, name="triton-inference", route_prefix="/api/v1/triton-inference")
-    
-    print("\n" + "="*70)
-    print("RAY-TRITON DEPLOYMENT READY!")
-    print("="*70)
-    print(f"\nModel Repository: {MODEL_REPO}")
-    print(f"Logs: {LOG_DIR}/triton_usage.log")
-    print(f"\nAPI Keys for demo:")
-    for key, user in API_KEYS.items():
-        print(f"  {user}: {key}")
-    print(f"\nEndpoints:")
-    print(f"  Health: curl http://localhost:8000/api/v1/triton-inference/health")
-    print(f"  List models: curl -H 'Authorization: Bearer demo-key-admin' http://localhost:8000/api/v1/triton-inference/v2/models")
-    print(f"  Inference: POST http://localhost:8000/api/v1/triton-inference/v2/models/{{model_name}}/infer")
-    print(f"\nRay Dashboard: http://<head-ip>:8265")
-    print(f"Triton Metrics: http://localhost:8003/metrics")
-    print("="*70 + "\n")
+deployment = TritonInferenceDeployment.bind(MODEL_REPO)
+handle = serve.run(deployment, name="triton-inference", route_prefix="/")
+
+print("\n" + "="*70)
+print("RAY-TRITON DEPLOYMENT READY!")
+print("="*70)
+print(f"\nModel Repository: {MODEL_REPO}")
+print(f"Logs: {LOG_DIR}/triton_usage.log")
+print(f"\nAPI Keys for demo:")
+for key, user in API_KEYS.items():
+    print(f"  {user}: {key}")
+print(f"\nEndpoints:")
+print(f"  Health: curl http://localhost:8000/health")
+print(f"  List models: curl -H 'Authorization: Bearer demo-key-admin' http://localhost:8000/v2/models")
+print(f"  Inference: POST http://localhost:8000/v2/models/{{model_name}}/infer")
+print(f"\nRay Dashboard: http://<head-ip>:8265")
+print(f"Triton Metrics: http://localhost:8003/metrics")
+print("="*70 + "\n")

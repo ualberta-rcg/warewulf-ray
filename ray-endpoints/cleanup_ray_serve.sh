@@ -1,7 +1,8 @@
 #!/bin/bash
 # Cleanup script for Ray Serve - stops Serve and cleans logs
 
-set -e
+# Don't use set -e here because we want to continue even if some cleanup steps fail
+set +e
 
 echo "🧹 Cleaning up Ray Serve..."
 
@@ -45,11 +46,15 @@ try:
     
     # Shutdown Serve
     try:
+        # Check if Serve is running first
         serve.start(detached=True)
+        # If we get here, Serve was running, so shut it down
         serve.shutdown()
         print("✓ Ray Serve stopped")
     except Exception as e:
+        # Serve might not be running, that's fine
         print(f"⚠ Ray Serve may not be running: {e}")
+        pass
 except Exception as e:
     print(f"⚠ Error during cleanup: {e}")
 EOF

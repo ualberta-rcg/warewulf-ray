@@ -30,17 +30,6 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Verify NFS setup (quick check)
-echo "🔍 Verifying NFS setup..."
-if [ -f "$SCRIPT_DIR/verify_nfs_setup.sh" ]; then
-    if ! bash "$SCRIPT_DIR/verify_nfs_setup.sh" 2>/dev/null; then
-        echo "⚠ NFS setup verification had issues"
-        echo "   Continuing anyway, but workers may not find base.py"
-        echo "   Run 'bash verify_nfs_setup.sh' for details"
-        echo ""
-    fi
-fi
-
 # Check if RAY_ADDRESS is set (remote cluster)
 if [ -n "$RAY_ADDRESS" ]; then
     echo "📡 RAY_ADDRESS is set to: $RAY_ADDRESS"
@@ -65,9 +54,8 @@ else
     fi
 fi
 
-# Deploy endpoints
-echo "📦 Deploying endpoints..."
-# Run deploy.py from the ray-endpoints directory
+# Deploy Triton endpoints
+echo "📦 Deploying Triton endpoints..."
 cd "$SCRIPT_DIR"
 
 # Use the Ray Python from venv if available
@@ -77,7 +65,7 @@ else
     PYTHON="python3"
 fi
 
-$PYTHON deploy.py
+$PYTHON deploy_triton.py
 
 echo ""
 echo "✅ Deployment complete!"
@@ -90,18 +78,18 @@ if [ -z "$HEAD_IP" ]; then
 fi
 
 echo "Endpoints available:"
-echo "  - Stable Diffusion:"
-echo "    Local:  http://localhost:8000/api/v1/stable-diffusion"
-echo "    Network: http://${HEAD_IP}:8000/api/v1/stable-diffusion"
-echo "  - Kandinsky3:"
-echo "    Local:  http://localhost:8000/api/v1/kandinsky3"
-echo "    Network: http://${HEAD_IP}:8000/api/v1/kandinsky3"
+echo "  - Stable Diffusion Triton:"
+echo "    Local:  http://localhost:8000/api/v1/stable-diffusion-triton"
+echo "    Network: http://${HEAD_IP}:8000/api/v1/stable-diffusion-triton"
+echo "  - Kandinsky3 Triton:"
+echo "    Local:  http://localhost:8000/api/v1/kandinsky3-triton"
+echo "    Network: http://${HEAD_IP}:8000/api/v1/kandinsky3-triton"
 echo ""
 echo "Test with:"
-echo "  curl http://localhost:8000/api/v1/stable-diffusion/health"
-echo "  curl http://${HEAD_IP}:8000/api/v1/stable-diffusion/health"
-echo "  curl http://localhost:8000/api/v1/kandinsky3/health"
-echo "  curl http://${HEAD_IP}:8000/api/v1/kandinsky3/health"
+echo "  curl http://localhost:8000/api/v1/stable-diffusion-triton/health"
+echo "  curl http://${HEAD_IP}:8000/api/v1/stable-diffusion-triton/health"
+echo "  curl http://localhost:8000/api/v1/kandinsky3-triton/health"
+echo "  curl http://${HEAD_IP}:8000/api/v1/kandinsky3-triton/health"
 echo ""
 echo "To cleanup and redeploy:"
 echo "  bash quick_start.sh --cleanup"

@@ -10,11 +10,14 @@ ray-endpoints/
 ├── base.py              # Base endpoint class
 ├── loader.py            # Endpoint discovery
 ├── deploy.py            # Deployment script
-├── client_example.py    # Example client code
+├── deploy_triton.py     # Triton deployments
 ├── endpoints/
 │   ├── __init__.py
 │   ├── stable_diffusion.py
-│   └── kandinsky3.py
+│   ├── kandinsky3.py
+│   ├── stable_diffusion_triton.py
+│   ├── kandinsky3_triton.py
+│   └── triton_inference.py
 └── README.md
 ```
 
@@ -33,18 +36,16 @@ cd /opt/ray-endpoints
 /opt/ray/bin/python deploy.py endpoints/stable_diffusion.py
 ```
 
-### Using the Clients
+### Using the Endpoints
 
-```python
-from ray_endpoints.client_example import ModelClient
+```bash
+# Health check
+curl http://localhost:8000/api/v1/stable-diffusion/health
 
-# Stable Diffusion
-sd_client = ModelClient(endpoint="/api/v1/stable-diffusion")
-result = sd_client.generate("a beautiful landscape", steps=25)
-
-# Kandinsky3
-kandinsky_client = ModelClient(endpoint="/api/v1/kandinsky3")
-result = kandinsky_client.generate("futuristic city", steps=30)
+# Generate image (POST request)
+curl -X POST http://localhost:8000/api/v1/stable-diffusion/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a beautiful landscape", "steps": 25}'
 ```
 
 ## Features
