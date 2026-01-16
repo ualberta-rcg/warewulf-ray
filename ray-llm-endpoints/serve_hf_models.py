@@ -61,10 +61,15 @@ class HuggingFaceLLMEndpoint:
         import subprocess
         
         # Check if vLLM is available, if not try to install it
-        vllm_llm = LLM
-        vllm_sampling_params = SamplingParams
+        # Initialize variables to avoid UnboundLocalError
+        vllm_llm = None
+        vllm_sampling_params = None
         
-        if not VLLM_AVAILABLE:
+        if VLLM_AVAILABLE:
+            # vLLM is already available
+            vllm_llm = LLM
+            vllm_sampling_params = SamplingParams
+        else:
             print("⚠️  vLLM not available. Attempting to install...")
             try:
                 # Try to install vllm using the Ray Python
@@ -99,6 +104,10 @@ class HuggingFaceLLMEndpoint:
             except Exception as e:
                 print(f"❌ Failed to install vLLM: {e}")
                 raise ImportError(f"vLLM not available and installation failed: {e}. Install with: /opt/ray/bin/pip install vllm>=0.10.1")
+        
+        # Verify vLLM is available
+        if vllm_llm is None or vllm_sampling_params is None:
+            raise ImportError("vLLM is not available. Installation may have failed.")
         
         # Store SamplingParams class for later use
         self.SamplingParams = vllm_sampling_params
