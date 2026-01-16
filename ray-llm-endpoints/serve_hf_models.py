@@ -129,12 +129,14 @@ class HuggingFaceLLMEndpoint:
             # Configure vLLM with HuggingFace token if provided
             # Note: max_model_len should match the model's max_position_embeddings
             # DeepSeek-7B has max_position_embeddings=4096, so we use 4096 or less
+            # enforce_eager=True disables torch.compile which requires Python dev headers
             llm_kwargs = {
                 "model": model_name,
                 "tensor_parallel_size": 1,  # Adjust for multi-GPU
                 "max_model_len": 4096,  # Match model's max_position_embeddings (DeepSeek-7B: 4096)
                 "trust_remote_code": True,  # For models that need custom code
                 "download_dir": "/data/models",  # Cache models on NFS
+                "enforce_eager": True,  # Disable torch.compile (avoids Python.h requirement)
             }
             
             # Set HuggingFace token for authentication

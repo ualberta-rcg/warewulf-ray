@@ -107,10 +107,12 @@ class GPTOSSEndpoint:
         try:
             # Note: max_model_len should match the model's max_position_embeddings
             # GPT-OSS-20B typically supports longer contexts, but start with 4096 to be safe
+            # enforce_eager=True disables torch.compile which requires Python dev headers
             self.llm = vllm_llm(
                 model=model_name,
                 tensor_parallel_size=1,  # Adjust for multi-GPU
                 max_model_len=4096,  # Start with 4096, can increase if model supports it
+                enforce_eager=True,  # Disable torch.compile (avoids Python.h requirement)
             )
             print(f"✅ Model loaded: {model_name}")
         except Exception as e:
