@@ -110,22 +110,62 @@ def main():
         print(f"❌ Failed to connect to Ray cluster: {e}")
         sys.exit(1)
     
-    # Note: Triton will be embedded in Ray Serve deployments if tritonserver Python API is available
-    # Otherwise, it will use HTTP client to connect to external Triton server
+    # Check Triton setup - we use standalone Triton binary (recommended for Warewulf)
+    # The standalone binary is available via nvidia-pytriton at:
+    # /opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver
     print("🔍 Checking Triton setup...")
-    try:
-        # Try importing tritonserver - this should work if nvidia-pytriton is installed
-        import sys
-        # Check in the current Python environment (Ray's Python)
-        import tritonserver
-        print("✅ Triton Python API available - will use embedded Triton in deployments")
-        print("   (No separate Triton process needed)")
-    except ImportError as e:
-        print("⚠️  Triton Python API not available - will use HTTP client")
-        print(f"   Import error: {e}")
-        print("   (Triton server must be running separately on port 8000)")
-        print("   To use embedded Triton, install in Ray's environment:")
+    
+    TRITON_BINARY = "/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver"
+    TRITON_URL = "localhost:8000"
+    
+    # Check if Triton binary exists
+    if os.path.exists(TRITON_BINARY):
+        print(f"✅ Triton binary found: {TRITON_BINARY}")
+        print("   Using standalone Triton binary (recommended for Warewulf)")
+    else:
+        print(f"⚠️  Triton binary not found at {TRITON_BINARY}")
+        print("   Make sure nvidia-pytriton is installed:")
         print("   /opt/ray/bin/pip install nvidia-pytriton")
+    
+    # Check if Triton server is already running
+    try:
+        import requests
+        response = requests.get(f"http://{TRITON_URL}/v2/health/live", timeout=2)
+        if response.status_code == 200:
+            print(f"✅ Triton server is already running on {TRITON_URL}")
+        else:
+            print(f"⚠️  Triton server not responding on {TRITON_URL}")
+            print("   Will start Triton automatically if binary is available")
+    except Exception as e:
+        print(f"⚠️  Triton server not running on {TRITON_URL}")
+        print("   Will use HTTP client mode (Triton must be started separately)")
+        print("   To start Triton: bash start_triton.sh")
+    
+    # Try to start Triton if not running and binary is available
+    if os.path.exists(TRITON_BINARY):
+        try:
+            import requests
+            response = requests.get(f"http://{TRITON_URL}/v2/health/live", timeout=2)
+            if response.status_code != 200:
+                # Triton not running - try to start it
+                print("🚀 Starting Triton server...")
+                import subprocess
+                import os
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                start_script = os.path.join(script_dir, "start_triton.sh")
+                if os.path.exists(start_script):
+                    # Start in background (non-blocking)
+                    subprocess.Popen(
+                        ["bash", start_script],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    print("   (Triton starting in background - may take a few seconds)")
+                else:
+                    print(f"   (start_triton.sh not found at {start_script})")
+        except Exception as e:
+            print(f"   (Could not auto-start Triton: {e})")
+            print("   Start manually with: bash start_triton.sh")
     
     # Start Ray Serve with HTTP options to listen on all interfaces
     # Note: Ray Serve uses port 8001 to avoid conflict with Triton (port 8000)

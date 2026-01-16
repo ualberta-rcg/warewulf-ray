@@ -8,7 +8,8 @@ This container image provides:
 - **Ray** (full installation with all extras: default, serve, tune, rllib, data, train, air, gpu, and more)
 - **NVIDIA Triton Inference Server** support:
   - `tritonclient[all]`: Client libraries for connecting to Triton servers (HTTP, gRPC)
-  - `nvidia-pytriton`: PyTriton wrapper for Triton's Python API (embedded mode with Ray Serve)
+  - `nvidia-pytriton`: Provides standalone Triton binary (recommended for Warewulf)
+  - Standalone Triton server binary for better control in HPC environments
 - **NVIDIA GPU driver** support (optional, configurable)
 - **Systemd** support for service management
 - **Ansible** integration for first-boot configuration
@@ -19,7 +20,7 @@ This container image provides:
 - Full systemd support for service management
 - Complete Ray installation with all extras (Serve, Tune, RLlib, Data, Train, AIR, GPU, etc.)
 - GPU support with optional NVIDIA driver installation
-- Ray Serve integration with Triton Inference Server
+- Ray Serve integration with Triton Inference Server (standalone binary approach)
 - First-boot configuration via Ansible playbooks
 - Optimized for HPC cluster environments (Warewulf)
 - Minimal Python system packages (uses virtual environment)
@@ -248,6 +249,7 @@ MIT License - See [LICENSE](LICENSE) file for details.
 - [Ray Documentation](https://docs.ray.io/)
 - [NVIDIA Triton Inference Server](https://developer.nvidia.com/triton-inference-server)
 - [Ray Serve with Triton](https://docs.ray.io/en/latest/serve/tutorials/triton.html)
+- [Triton Setup Documentation](ray-endpoints/README_TRITON.md) - Detailed guide for standalone Triton binary
 - [Warewulf Documentation](https://warewulf.org/)
 - [Digital Research Alliance of Canada](https://alliancecan.ca/)
 

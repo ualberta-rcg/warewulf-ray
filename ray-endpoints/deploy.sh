@@ -40,6 +40,25 @@ fi
 # Install requests if needed (for Triton health check)
 "$RAY_PYTHON" -m pip install -q requests 2>/dev/null || true
 
+# Check if Triton binary is available (standalone binary approach)
+TRITON_BINARY="/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver"
+if [ -f "$TRITON_BINARY" ]; then
+    echo "✅ Triton binary found: $TRITON_BINARY"
+    echo "   Using standalone Triton binary (recommended for Warewulf with ubuntu:24.04)"
+    
+    # Check if Triton is running
+    if curl -s "http://localhost:8000/v2/health/live" > /dev/null 2>&1; then
+        echo "✅ Triton server is already running"
+    else
+        echo "⚠️  Triton server not running - will be started by deploy.py if needed"
+        echo "   Or start manually: bash start_triton.sh"
+    fi
+else
+    echo "⚠️  Triton binary not found at $TRITON_BINARY"
+    echo "   Make sure nvidia-pytriton is installed in Ray environment"
+    echo "   (This should be installed in the Dockerfile)"
+fi
+
 # Run the deployment script
 echo "🚀 Deploying Ray Serve endpoints..."
 "$RAY_PYTHON" deploy.py "$@"

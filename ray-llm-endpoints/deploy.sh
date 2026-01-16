@@ -31,7 +31,17 @@ if [ -f "requirements.txt" ]; then
     "$RAY_PYTHON" -m pip install --upgrade -q -r requirements.txt || {
         echo "⚠️  Warning: Some dependencies may have failed to install"
         echo "   This is OK if they're already installed"
+        echo "   (Dependencies will be installed on workers via runtime_env)"
     }
+fi
+
+# Try to install ray[serve-llm] if not available (for workers via runtime_env)
+# Note: This will be installed on workers automatically via runtime_env
+# We just check if it's available on head node
+if ! "$RAY_PYTHON" -c "from ray.serve.llm import LLMConfig" 2>/dev/null; then
+    echo "⚠️  ray.serve.llm not available on head node"
+    echo "   Will use vLLM direct approach (deploy_hf_models.py or deploy_vllm.py)"
+    echo "   ray[serve-llm] will be installed on workers via runtime_env if needed"
 fi
 
 # Run the deployment script

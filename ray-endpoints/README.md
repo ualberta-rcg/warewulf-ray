@@ -60,18 +60,22 @@ pip install -r requirements.txt
 /opt/ray/bin/python deploy.py
 ```
 
-3. **Triton Inference Server** (automatically embedded in deployments):
+3. **Triton Inference Server** (standalone binary - recommended for Warewulf):
 ```bash
-# Triton is now embedded directly in Ray Serve deployments (no separate process needed!)
-# If nvidia-pytriton is installed, Triton will start automatically in each deployment
-# 
-# If you need to use external Triton (fallback mode), start it manually:
+# We use the standalone Triton binary (not embedded Python API)
+# The binary is available via nvidia-pytriton at:
+# /opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver
+
+# Triton will be started automatically by deploy.py if not running
+# Or start manually:
 chmod +x start_triton.sh
 ./start_triton.sh
 
-# Check if external Triton is running:
+# Check if Triton is running:
 curl http://localhost:8000/v2/health/live
 ```
+
+See [README_TRITON.md](README_TRITON.md) for detailed Triton setup.
 
 4. Ensure Ray cluster is running:
 ```bash
@@ -105,9 +109,10 @@ ray status
 **Prerequisites:**
 1. Ray cluster must be running
 2. Dependencies installed in Ray environment
-3. **Triton is embedded in deployments** - no separate Triton process needed!
-   - If `nvidia-pytriton` is installed, Triton starts automatically in each deployment
-   - If not available, will fallback to HTTP client (requires external Triton on port 8000)
+3. **Triton standalone binary** - uses separate Triton process (recommended for Warewulf)
+   - Triton binary comes with `nvidia-pytriton` package
+   - Triton will be started automatically by `deploy.py` if not running
+   - Ray Serve endpoints use HTTP client to connect to Triton on port 8000
 
 Deploy all endpoints:
 ```bash
@@ -119,8 +124,9 @@ Deploy all endpoints:
 ```
 
 **Note:** 
-- **Embedded Mode (Recommended)**: If `nvidia-pytriton` is installed, Triton runs embedded in each Ray Serve deployment - no separate process needed!
-- **External Mode (Fallback)**: If embedded mode isn't available, endpoints will connect to external Triton on port 8000. Start it with `./start_triton.sh`
+- **Standalone Binary Mode (Recommended for Warewulf)**: We use the standalone Triton binary for better control in HPC environments. Triton runs as a separate process on port 8000, and Ray Serve endpoints connect via HTTP client.
+- **Automatic Start**: The `deploy.py` script automatically starts Triton if it's not running
+- See [README_TRITON.md](README_TRITON.md) for detailed Triton setup documentation
 
 **Note:** Ray Serve is configured to listen on `0.0.0.0:8000` for network access. If you need to restart Ray Serve with these settings:
 ```bash
@@ -228,8 +234,8 @@ Edit `config/ray_config.yaml` to configure Ray Serve settings.
 
 **Note:** 
 - Ray Serve is configured to listen on `0.0.0.0:8001` (accessible from network, not localhost)
-- **Triton is embedded in deployments** (no separate port needed when using embedded mode)
-- If using external Triton, it runs on port `8000`
+- **Triton uses standalone binary** (recommended for Warewulf) - runs on port `8000` as separate process
+- Ray Serve endpoints connect to Triton via HTTP client on `localhost:8000`
 - All endpoints are accessible via the head node's IP address, not localhost
 - Based on official Ray documentation: [Serving models with Triton Server in Ray Serve](https://docs.ray.io/en/latest/serve/tutorials/triton-server-integration.html)
-- Also see: [NVIDIA's Ray Serve + Triton example](https://github.com/triton-inference-server/tutorials/blob/main/Triton_Inference_Server_Python_API/examples/rayserve/tritonserver_deployment.py)
+- See [README_TRITON.md](README_TRITON.md) for detailed Triton setup and architecture decisions

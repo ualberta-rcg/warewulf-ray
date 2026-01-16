@@ -1,6 +1,44 @@
-# Ray Serve LLM Endpoints - GPT-OSS
+# Ray Serve LLM Endpoints
 
-This directory contains Ray Serve LLM deployment for GPT-OSS models using vLLM backend.
+This directory contains Ray Serve LLM deployment for various LLM models.
+
+## Quick Start
+
+### Option 1: HuggingFace Models (Recommended - No ray.serve.llm needed)
+
+For HuggingFace models like DeepSeek-7B, use the vLLM direct approach:
+
+```bash
+export HF_TOKEN="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"
+cd ray-llm-endpoints
+bash deploy_hf.sh
+```
+
+See [README_HF.md](README_HF.md) for details.
+
+### Option 2: GPT-OSS Models (vLLM Direct)
+
+For GPT-OSS models without ray.serve.llm:
+
+```bash
+cd ray-llm-endpoints
+/opt/ray/bin/python deploy_vllm.py --model openai-community/gpt-oss-20b
+```
+
+### Option 3: GPT-OSS Models (ray.serve.llm)
+
+For GPT-OSS models using Ray Serve LLM extension (requires `ray[serve-llm]`):
+
+```bash
+cd ray-llm-endpoints
+bash deploy.sh
+```
+
+**Note:** `ray[serve-llm]` is not included in `ray[all]` and requires additional installation.
+
+---
+
+## GPT-OSS Deployment (Original)
 
 Based on: [Ray Serve LLM GPT-OSS Tutorial](https://docs.ray.io/en/latest/serve/tutorials/deployment-serve-llm/gpt-oss/README.html)
 
