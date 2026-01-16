@@ -34,12 +34,18 @@ def deploy_all():
     """Deploy all available endpoints"""
     print("🚀 Deploying all Ray Serve endpoints...")
     
-    # Import endpoint modules
-    from endpoints import onnx_models, stable_diffusion
-    
-    # Deploy ONNX model endpoints
+    # Deploy ONNX model endpoints (simple version following Ray docs)
     print("📦 Deploying ONNX model endpoints...")
-    onnx_models.deploy()
+    try:
+        from endpoints import onnx_models_simple
+        onnx_models_simple.deploy()
+    except ImportError:
+        # Fallback to original if simple version not available
+        from endpoints import onnx_models
+        onnx_models.deploy()
+    
+    # Import stable diffusion
+    from endpoints import stable_diffusion
     
     # Deploy Stable Diffusion endpoint
     print("🎨 Deploying Stable Diffusion endpoint...")
@@ -63,8 +69,12 @@ def deploy_specific(endpoint_name: str):
     print(f"🚀 Deploying endpoint: {endpoint_name}")
     
     if endpoint_name == "onnx_models":
-        from endpoints import onnx_models
-        onnx_models.deploy()
+        try:
+            from endpoints import onnx_models_simple
+            onnx_models_simple.deploy()
+        except ImportError:
+            from endpoints import onnx_models
+            onnx_models.deploy()
     elif endpoint_name == "stable_diffusion":
         from endpoints import stable_diffusion
         stable_diffusion.deploy()
