@@ -192,7 +192,7 @@ class TritonModelHandler:
     num_replicas=1,
     ray_actor_options={
         "runtime_env": {
-            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0"]
+            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0", "onnxruntime>=1.16.0"]
         }
     }
 )
@@ -247,7 +247,7 @@ class ONNXModelProxy:
     num_replicas=1,
     ray_actor_options={
         "runtime_env": {
-            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0"]
+            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0", "onnxruntime>=1.16.0"]
         }
     }
 )
@@ -290,7 +290,7 @@ class ResNet50Endpoint:
     num_replicas=1,
     ray_actor_options={
         "runtime_env": {
-            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0"]
+            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0", "onnxruntime>=1.16.0"]
         }
     }
 )
