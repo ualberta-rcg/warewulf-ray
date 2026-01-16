@@ -76,11 +76,52 @@ def deploy_all_endpoints():
     
     print(f"Found {len(endpoint_classes)} endpoints")
     
-    # Start Ray Serve (will use existing Ray connection)
+    # Start Ray Serve with HTTP options to listen on all interfaces (0.0.0.0)
+    # This allows access from outside the head node
+    # Also clean up any stale/failed deployments
     try:
-        serve.start(detached=True)
+        from ray.serve.config import HTTPOptions
+        http_options = HTTPOptions(
+            host="0.0.0.0",  # Listen on all interfaces
+            port=8000,
+        )
+        serve.start(detached=True, http_options=http_options)
+        print("✓ Ray Serve started on 0.0.0.0:8000 (accessible from network)")
     except Exception as e:
-        print(f"⚠ Ray Serve may already be running: {e}")
+        # If HTTPOptions doesn't exist or serve is already running, try alternative methods
+        try:
+            # Try with dict format
+            serve.start(detached=True, http_options={"host": "0.0.0.0", "port": 8000})
+            print("✓ Ray Serve started on 0.0.0.0:8000 (accessible from network)")
+        except Exception as e2:
+            # If that fails, just start normally (may already be running)
+            try:
+                serve.start(detached=True)
+                print("⚠ Ray Serve started (may need to configure host manually)")
+            except Exception as e3:
+                print(f"⚠ Ray Serve may already be running: {e3}")
+    
+    # Clean up any stale/failed deployments
+    try:
+        status = serve.status()
+        if hasattr(status, 'applications') and status.applications:
+            for app_name, app_info in status.applications.items():
+                # Check for failed apps or apps with failed deployments
+                if hasattr(app_info, 'status'):
+                    if app_info.status in ["DEPLOYING_FAILED", "UNHEALTHY"]:
+                        print(f"⚠ Found failed app: {app_name}, attempting to delete...")
+                        try:
+                            serve.delete(app_name)
+                            print(f"✓ Deleted failed app: {app_name}")
+                        except Exception as e:
+                            print(f"  Could not delete {app_name}: {e}")
+                # Also check individual deployments
+                if hasattr(app_info, 'deployments'):
+                    for dep_name, dep_info in app_info.deployments.items():
+                        if hasattr(dep_info, 'status') and dep_info.status in ["UNHEALTHY", "DEPLOYING_FAILED"]:
+                            print(f"⚠ Found failed deployment: {dep_name} in app {app_name}")
+    except Exception as e:
+        print(f"⚠ Could not check for stale deployments: {e}")
     
     deployments = []
     for endpoint_class in endpoint_classes:
@@ -129,10 +170,27 @@ def deploy_single_endpoint(endpoint_file: str):
     
     endpoint_class = load_endpoint_from_file(endpoint_file)
     
+    # Start Ray Serve with HTTP options to listen on all interfaces (0.0.0.0)
     try:
-        serve.start(detached=True)
+        from ray.serve.config import HTTPOptions
+        http_options = HTTPOptions(
+            host="0.0.0.0",  # Listen on all interfaces
+            port=8000,
+        )
+        serve.start(detached=True, http_options=http_options)
+        print("✓ Ray Serve started on 0.0.0.0:8000 (accessible from network)")
     except Exception as e:
-        print(f"⚠ Ray Serve may already be running: {e}")
+        # If HTTPOptions doesn't exist or serve is already running, try without it
+        try:
+            serve.start(detached=True, http_options={"host": "0.0.0.0", "port": 8000})
+            print("✓ Ray Serve started on 0.0.0.0:8000 (accessible from network)")
+        except Exception as e2:
+            # If that fails, just start normally (may already be running)
+            try:
+                serve.start(detached=True)
+                print("⚠ Ray Serve started (may need to configure host manually)")
+            except Exception as e3:
+                print(f"⚠ Ray Serve may already be running: {e3}")
     
     # Get autoscaling config (need to create instance temporarily)
     temp_instance = endpoint_class()

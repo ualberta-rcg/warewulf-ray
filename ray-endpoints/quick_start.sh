@@ -57,10 +57,23 @@ $PYTHON deploy.py
 echo ""
 echo "✅ Deployment complete!"
 echo ""
+
+# Get the head node IP address for network access
+HEAD_IP=$(hostname -I | awk '{print $1}')
+if [ -z "$HEAD_IP" ]; then
+    HEAD_IP="localhost"
+fi
+
 echo "Endpoints available:"
-echo "  - Stable Diffusion: http://localhost:8000/api/v1/stable-diffusion"
-echo "  - Kandinsky3: http://localhost:8000/api/v1/kandinsky3"
+echo "  - Stable Diffusion:"
+echo "    Local:  http://localhost:8000/api/v1/stable-diffusion"
+echo "    Network: http://${HEAD_IP}:8000/api/v1/stable-diffusion"
+echo "  - Kandinsky3:"
+echo "    Local:  http://localhost:8000/api/v1/kandinsky3"
+echo "    Network: http://${HEAD_IP}:8000/api/v1/kandinsky3"
 echo ""
 echo "Test with:"
 echo "  curl http://localhost:8000/api/v1/stable-diffusion/health"
+echo "  curl http://${HEAD_IP}:8000/api/v1/stable-diffusion/health"
 echo "  curl http://localhost:8000/api/v1/kandinsky3/health"
+echo "  curl http://${HEAD_IP}:8000/api/v1/kandinsky3/health"
