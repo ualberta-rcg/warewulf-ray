@@ -304,7 +304,34 @@ def deploy_all_endpoints():
             from pathlib import Path
             
             # Get the ray-endpoints directory path
-            ray_endpoints_dir = Path(__file__).parent.absolute()
+            # Since code will be on shared NFS at /data/warewulf-ray, use that path
+            # This ensures workers can find base.py and other modules
+            current_dir = Path(__file__).parent.absolute()
+            
+            # Determine the shared NFS path - check if we're already on /data
+            if str(current_dir).startswith("/data"):
+                # Already on shared NFS
+                ray_endpoints_nfs_path = str(current_dir)
+            else:
+                # Code is on head node, but workers need /data path
+                # Try common locations on /data
+                possible_nfs_paths = [
+                    "/data/warewulf-ray/warewulf-ray/ray-endpoints",
+                    "/data/warewulf-ray/ray-endpoints",
+                    "/data/ray-endpoints",
+                ]
+                ray_endpoints_nfs_path = None
+                for path in possible_nfs_paths:
+                    if os.path.exists(path) and os.path.exists(f"{path}/base.py"):
+                        ray_endpoints_nfs_path = path
+                        print(f"✓ Found ray-endpoints on NFS at: {ray_endpoints_nfs_path}")
+                        break
+                
+                if not ray_endpoints_nfs_path:
+                    # Fallback: use current directory (may not work on workers)
+                    ray_endpoints_nfs_path = str(current_dir)
+                    print(f"⚠ Warning: Could not find ray-endpoints on /data, using {ray_endpoints_nfs_path}")
+                    print(f"   Make sure code is cloned to /data/warewulf-ray/... for workers to access it")
             
             # Support Compute Canada modules if available
             # Check if module command is available and load common modules
@@ -325,10 +352,10 @@ def deploy_all_endpoints():
             # Build PATH with shared venv if available
             path_components = [os.environ.get("PATH", "")]
             # Add both ray-endpoints directory and endpoints subdirectory to PYTHONPATH
-            # This ensures base.py and endpoint modules can be imported
+            # Use the NFS path so workers can find base.py and endpoint modules
             pythonpath_components = [
-                str(ray_endpoints_dir),
-                str(ray_endpoints_dir / "endpoints"),
+                ray_endpoints_nfs_path,
+                f"{ray_endpoints_nfs_path}/endpoints",
             ]
             
             if use_shared_venv:
@@ -402,18 +429,24 @@ def deploy_all_endpoints():
                             # PYTHONPATH has ray-endpoints directory first
                             ray_endpoints_dir = Path(pythonpath.split(":")[0])
                         else:
-                            # Fallback: try common locations
+                            # Fallback: try common locations (check /data first since it's shared NFS)
                             for possible_path in [
-                                "/root/warewulf-ray/ray-endpoints",
+                                "/data/warewulf-ray/warewulf-ray/ray-endpoints",
+                                "/data/warewulf-ray/ray-endpoints",
                                 "/data/ray-endpoints",
+                                "/root/warewulf-ray/ray-endpoints",  # Head node location
                                 Path(__file__).parent.absolute() if '__file__' in globals() else None,
                             ]:
                                 if possible_path and Path(possible_path).exists():
-                                    ray_endpoints_dir = Path(possible_path)
-                                    break
+                                    # Verify base.py exists
+                                    if (Path(possible_path) / "base.py").exists():
+                                        ray_endpoints_dir = Path(possible_path)
+                                        print(f"✓ Found ray-endpoints at: {ray_endpoints_dir}")
+                                        break
                             else:
                                 # Last resort: use current directory
                                 ray_endpoints_dir = Path(os.getcwd())
+                                print(f"⚠ Using current directory as fallback: {ray_endpoints_dir}")
                         
                         # Add to sys.path if not already there
                         if str(ray_endpoints_dir) not in sys.path:

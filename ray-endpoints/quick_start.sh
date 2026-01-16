@@ -30,6 +30,17 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Verify NFS setup (quick check)
+echo "🔍 Verifying NFS setup..."
+if [ -f "$SCRIPT_DIR/verify_nfs_setup.sh" ]; then
+    if ! bash "$SCRIPT_DIR/verify_nfs_setup.sh" 2>/dev/null; then
+        echo "⚠ NFS setup verification had issues"
+        echo "   Continuing anyway, but workers may not find base.py"
+        echo "   Run 'bash verify_nfs_setup.sh' for details"
+        echo ""
+    fi
+fi
+
 # Check if RAY_ADDRESS is set (remote cluster)
 if [ -n "$RAY_ADDRESS" ]; then
     echo "📡 RAY_ADDRESS is set to: $RAY_ADDRESS"
