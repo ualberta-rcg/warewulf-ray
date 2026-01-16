@@ -209,7 +209,6 @@ def deploy_all_endpoints():
             # Wrap FastAPI app in a Ray Serve deployment class
             # Create endpoint and app INSIDE __init__ to avoid serialization issues
             # Add runtime_env to ensure dependencies and paths are available on workers
-            import os
             from pathlib import Path
             
             # Get the ray-endpoints directory path
