@@ -34,6 +34,9 @@ def discover_endpoints(endpoints_dir: str = None) -> List[Type[BaseEndpoint]]:
     for endpoint_file in endpoints_dir.glob("*.py"):
         if endpoint_file.name == "__init__.py":
             continue
+        # Skip triton files - they're deployed separately, not via BaseEndpoint
+        if endpoint_file.name.endswith("_triton.py"):
+            continue
         
         try:
             # Load the module directly from file
