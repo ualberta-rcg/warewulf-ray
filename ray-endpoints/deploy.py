@@ -476,23 +476,45 @@ def deploy_all_endpoints():
                         print(f"Creating endpoint instance: {endpoint_class.DEPLOYMENT_NAME}")
                         self.endpoint = endpoint_class()
                         self._app = self.endpoint.create_app()
+                        
+                        # Verify the app is a proper ASGI app
+                        if not hasattr(self._app, '__call__'):
+                            raise ValueError(f"create_app() did not return a callable ASGI app")
+                        
+                        # Test that the app can be called (basic ASGI check)
+                        if not callable(self._app):
+                            raise ValueError(f"create_app() returned a non-callable object: {type(self._app)}")
+                        
                         print(f"✓ Endpoint {endpoint_class.DEPLOYMENT_NAME} initialized successfully")
+                        print(f"  App type: {type(self._app)}")
                         
                     except Exception as e:
                         print(f"✗ Failed to initialize deployment: {e}")
                         traceback.print_exc()
                         raise
                 
-                # Ray Serve will call this as an ASGI app
-                # When route_prefix is set, Ray Serve handles routing automatically
-                # We forward the ASGI interface directly to FastAPI
+                # Ray Serve ASGI interface - forward to FastAPI app
                 async def __call__(self, scope, receive, send):
-                    # Forward directly to FastAPI app (which is ASGI-compatible)
-                    # Ray Serve strips the route_prefix before forwarding, so paths are correct
-                    await self._app(scope, receive, send)
+                    """ASGI interface - forward requests to FastAPI app"""
+                    try:
+                        # Ensure app is initialized
+                        if not hasattr(self, '_app') or self._app is None:
+                            raise RuntimeError(f"FastAPI app not initialized for {endpoint_class.DEPLOYMENT_NAME}")
+                        
+                        # Forward directly to FastAPI app (which is ASGI-compatible)
+                        # Ray Serve strips the route_prefix before forwarding, so paths are correct
+                        await self._app(scope, receive, send)
+                    except Exception as e:
+                        # Handle errors gracefully - log and re-raise so Ray Serve can handle it
+                        import traceback
+                        error_msg = f"Error in ASGI handler for {endpoint_class.DEPLOYMENT_NAME}: {e}"
+                        print(error_msg)
+                        print(traceback.format_exc())
+                        # Re-raise so Ray Serve can handle the error properly
+                        raise
             
             # Deploy using serve.run with route_prefix
-            # In Ray Serve 2.53.0, route_prefix properly routes to the deployment
+            # In Ray Serve, route_prefix properly routes to the deployment
             serve.run(
                 FastAPIDeployment.bind(),
                 name=endpoint_class.DEPLOYMENT_NAME,
