@@ -1,0 +1,19 @@
+[Unit]
+Description=Ray Worker
+After=network.target
+
+[Service]
+Type=simple
+User=root
+
+# Environment variables (merged from /etc/sysconfig/ray-worker)
+Environment=RAY_SERVER=172.26.92.232:6379
+Environment=RAY_TMPDIR=/tmp/ray
+
+ExecStart=/opt/ray/bin/ray start --address="${RAY_SERVER}"
+ExecStop=/opt/ray/bin/ray stop
+Restart=on-failure
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
