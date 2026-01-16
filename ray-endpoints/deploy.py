@@ -115,7 +115,7 @@ def main():
     # /opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver
     print("🔍 Checking Triton setup...")
     
-    # Try NVIDIA's Triton binary first (from multi-stage build), fallback to nvidia-pytriton
+    # Try Triton binary from NVIDIA image first, fallback to nvidia-pytriton
     TRITON_BINARY = "/opt/tritonserver/bin/tritonserver"
     if not os.path.exists(TRITON_BINARY):
         TRITON_BINARY = "/opt/ray/lib/python3.10/site-packages/pytriton/tritonserver/bin/tritonserver"

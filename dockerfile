@@ -1,17 +1,5 @@
-# Multi-stage build: Extract Triton from NVIDIA's official image
-FROM nvcr.io/nvidia/tritonserver:23.12-py3 AS triton-source
-
-# Prepare Triton Python bindings in source stage
-RUN mkdir -p /tmp/triton-bindings && \
-    if [ -d "/usr/local/lib/python3.10/dist-packages" ]; then \
-        find /usr/local/lib/python3.10/dist-packages -name "tritonserver*" -exec cp -r {} /tmp/triton-bindings/ \; 2>/dev/null || true; \
-    fi && \
-    if [ -d "/opt/tritonserver/python" ]; then \
-        cp -r /opt/tritonserver/python/* /tmp/triton-bindings/ 2>/dev/null || true; \
-    fi
-
-# Main image: Ubuntu 24.04 with Python 3.10 (to match Triton's Python version)
-FROM ubuntu:24.04
+# Base image: NVIDIA Triton Inference Server (includes Triton, Python 3.10, CUDA, etc.)
+FROM nvcr.io/nvidia/tritonserver:23.12-py3
 
 # Set noninteractive frontend
 ENV DEBIAN_FRONTEND=noninteractive
@@ -139,112 +127,26 @@ RUN apt-get install -y \
       systemd-vconsole-setup.service \
       systemd-timesyncd.service
 
-# --- 6. Fetch and Apply SCAP Security Guide Remediation (optional) ---
-# Install SCAP scanner and apply CIS Level 2 Server profile remediation
-RUN apt-get install -y openscap-scanner libopenscap25t64 && \
-    export SSG_VERSION=$(curl -s https://api.github.com/repos/ComplianceAsCode/content/releases/latest | grep -oP '"tag_name": "\K[^"]+' || echo "0.1.66") && \
-    echo "🔄 Using SCAP Security Guide version: $SSG_VERSION" && \
-    SSG_VERSION_NO_V=$(echo "$SSG_VERSION" | sed 's/^v//') && \
-    wget -O /ssg.zip "https://github.com/ComplianceAsCode/content/releases/download/${SSG_VERSION}/scap-security-guide-${SSG_VERSION_NO_V}.zip" && \
-    mkdir -p /usr/share/xml/scap/ssg/content && \
-    if [ -f "/ssg.zip" ]; then \
-        unzip -jo /ssg.zip "scap-security-guide-${SSG_VERSION_NO_V}/*" -d /usr/share/xml/scap/ssg/content/ && \
-        rm -f /ssg.zip; \
-    else \
-        echo "❌ Failed to download SCAP Security Guide"; exit 1; \
-    fi && \
-    SCAP_GUIDE=$(find /usr/share/xml/scap/ssg/content -name "ssg-ubuntu*-ds.xml" | sort | tail -n1) && \
-    echo "📘 Found SCAP guide: $SCAP_GUIDE" && \
-    oscap xccdf eval \
-        --remediate \
-        --profile xccdf_org.ssgproject.content_profile_cis_level2_server \
-        --results /root/oscap-results.xml \
-        --report /root/oscap-report.html \
-        "$SCAP_GUIDE" || true && \
-    rm -rf /usr/share/xml/scap/ssg/content && \
-    apt-get remove -y openscap-scanner libopenscap25t64 && \
-    apt-get autoremove -y && \
-    apt-get clean
+# Note: The NVIDIA Triton image already includes:
+# - Python 3.10 (matches Triton's Python bindings)
+# - Triton Inference Server binary at /opt/tritonserver/bin/tritonserver
+# - Triton Python bindings (import tritonserver works)
+# - CUDA toolkit and libraries
+# - All necessary dependencies
 
-# --- 7. Install Python 3.10 (required for Triton Python API compatibility) ---
-# Ubuntu 24.04 comes with Python 3.12, but Triton's Python bindings are for Python 3.10
-# We need to add the deadsnakes PPA to get Python 3.10
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        software-properties-common \
-        build-essential \
-        zlib1g-dev \
-        libncurses5-dev \
-        libgdbm-dev \
-        libnss3-dev \
-        libssl-dev \
-        libreadline-dev \
-        libffi-dev \
-        libsqlite3-dev \
-        wget \
-        ca-certificates && \
-    add-apt-repository -y ppa:deadsnakes/ppa && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        python3.10 \
-        python3.10-dev \
-        python3.10-venv \
-        python3.10-distutils && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# --- 7a. Install Ray (full installation with all extras) with Python 3.10 ---
-# Note: Using Python 3.10 to match Triton's Python version for Python API compatibility
-# CUDA toolkit will be provided via CVMFS (Digital Research Alliance of Canada)
-# Install Ray in a virtual environment to avoid PEP 668 and Debian package conflicts
+# --- 7. Install Ray (full installation with all extras) ---
+# Note: The base image already has Python 3.10, which matches Triton's Python bindings
+# CUDA toolkit is already available in the base image
+# Install Ray in a virtual environment to avoid conflicts
 # ray[all] includes: default, serve, tune, rllib, data, train, air, gpu, and more
 # tritonclient[all]: Client libraries for connecting to Triton servers (HTTP, gRPC)
-RUN python3.10 -m venv /opt/ray && \
+# Note: tritonserver Python API is already available (import tritonserver works)
+RUN python3 -m venv /opt/ray && \
     /opt/ray/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/ray/bin/pip install --no-cache-dir "ray[all]" && \
     /opt/ray/bin/pip install --no-cache-dir "tritonclient[all]" && \
     echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/profile.d/ray.sh && \
     echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/bash.bashrc
-
-# --- 7b. Copy Triton Inference Server from NVIDIA image ---
-# Copy Triton server binary, libraries, and Python bindings (Python 3.10 compatible)
-# This enables 'import tritonserver' to work in Ray's Python 3.10 environment
-
-# First, copy the entire Triton installation
-COPY --from=triton-source /opt/tritonserver /opt/tritonserver
-
-# Copy prepared Python bindings from source stage
-COPY --from=triton-source /tmp/triton-bindings/ /tmp/triton-python-bindings/
-
-# Install Python bindings into Ray's Python 3.10 environment
-RUN mkdir -p /opt/ray/lib/python3.10/site-packages && \
-    # Copy Python bindings from prepared location
-    if [ -d "/tmp/triton-python-bindings" ] && [ "$(ls -A /tmp/triton-python-bindings 2>/dev/null)" ]; then \
-        cp -r /tmp/triton-python-bindings/* /opt/ray/lib/python3.10/site-packages/ 2>/dev/null || true; \
-        rm -rf /tmp/triton-python-bindings; \
-        echo "✅ Copied Triton Python bindings to Ray's site-packages"; \
-    else \
-        echo "⚠️  Triton Python bindings not found in source image - will use binary mode"; \
-    fi && \
-    # Also check for tritonserver Python modules in /opt/tritonserver/python (from copied binary)
-    if [ -d "/opt/tritonserver/python" ]; then \
-        cp -r /opt/tritonserver/python/* /opt/ray/lib/python3.10/site-packages/ 2>/dev/null || true; \
-    fi && \
-    # Set up Python path to include Triton's Python modules
-    echo 'export PYTHONPATH="/opt/tritonserver/python:${PYTHONPATH}"' >> /etc/profile.d/ray.sh && \
-    echo 'export PYTHONPATH="/opt/tritonserver/python:${PYTHONPATH}"' >> /etc/bash.bashrc
-
-# Set up Triton environment variables
-ENV PATH="/opt/tritonserver/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/tritonserver/lib:${LD_LIBRARY_PATH:-}"
-ENV PYTHONPATH="/opt/tritonserver/python:${PYTHONPATH:-}"
-
-# Verify Triton installation
-RUN echo "🔍 Verifying Triton installation..." && \
-    /opt/tritonserver/bin/tritonserver --version && \
-    echo "✅ Triton binary available" && \
-    (/opt/ray/bin/python -c "import tritonserver; print('✅ Triton Python API available'); print(f'   Location: {tritonserver.__file__}')" 2>&1 || \
-     echo "⚠️  Triton Python API not directly importable - will use binary mode or HTTP client")
 
 # Add Ray venv to PATH for all sessions
 ENV PATH="/opt/ray/bin:$PATH"

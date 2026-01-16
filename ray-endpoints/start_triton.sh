@@ -4,7 +4,7 @@
 
 set -e
 
-# Try NVIDIA's Triton binary first (from multi-stage build), fallback to nvidia-pytriton
+# Try Triton binary from NVIDIA image first, fallback to nvidia-pytriton
 TRITON_BINARY="/opt/tritonserver/bin/tritonserver"
 if [ ! -f "$TRITON_BINARY" ]; then
     TRITON_BINARY="/opt/ray/lib/python3.10/site-packages/pytriton/tritonserver/bin/tritonserver"

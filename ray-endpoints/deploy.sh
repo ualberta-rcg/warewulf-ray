@@ -40,7 +40,7 @@ fi
 # Install requests if needed (for Triton health check)
 "$RAY_PYTHON" -m pip install -q requests 2>/dev/null || true
 
-# Check if Triton binary is available (try NVIDIA's binary first, then nvidia-pytriton)
+# Check if Triton binary is available (try NVIDIA image first, then nvidia-pytriton)
 TRITON_BINARY="/opt/tritonserver/bin/tritonserver"
 if [ ! -f "$TRITON_BINARY" ]; then
     TRITON_BINARY="/opt/ray/lib/python3.10/site-packages/pytriton/tritonserver/bin/tritonserver"
