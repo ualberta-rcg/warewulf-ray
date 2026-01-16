@@ -20,6 +20,11 @@ STABLE_DIFFUSION_MODELS_DIR = "/data/models/stablediffusion"
 @serve.deployment(
     name="stable_diffusion",
     num_replicas=1,
+    ray_actor_options={
+        "runtime_env": {
+            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0"]
+        }
+    }
 )
 class StableDiffusionEndpoint:
     """Stable Diffusion model serving endpoint"""

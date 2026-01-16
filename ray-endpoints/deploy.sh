@@ -26,12 +26,14 @@ if ! "$RAY_PYTHON" -c "import ray" 2>/dev/null; then
 fi
 
 # Install dependencies if needed (in Ray's environment)
-# This ensures all Ray workers have the dependencies
+# Note: Runtime environments in deployments will install deps on workers automatically
+# But we also install here for head node and to fix version conflicts
 if [ -f "requirements.txt" ]; then
     echo "📦 Installing/updating dependencies in Ray environment..."
+    echo "   (Note: Dependencies will also be installed on workers via runtime_env)"
     "$RAY_PYTHON" -m pip install --upgrade -q -r requirements.txt || {
         echo "⚠️  Warning: Some dependencies may have failed to install"
-        echo "   This is OK if they're already installed"
+        echo "   This is OK - runtime_env will install them on workers"
     }
 fi
 

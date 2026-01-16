@@ -30,11 +30,14 @@ ray-endpoints/
 ### Option 1: Use Ray's Python directly (Recommended)
 ```bash
 # Install dependencies in Ray's environment
+# Note: Dependencies will also be installed on workers via runtime_env
 /opt/ray/bin/pip install -r requirements.txt
 
 # Deploy using Ray's Python
 /opt/ray/bin/python deploy.py
 ```
+
+**Note:** The deployments use Ray runtime environments to automatically install dependencies (Pillow, numpy) on all worker nodes. This ensures workers have the required packages even if they're not installed globally.
 
 ### Option 2: Use wrapper script (Easiest)
 ```bash

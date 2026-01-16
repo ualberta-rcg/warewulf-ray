@@ -133,6 +133,11 @@ class TritonModelHandler:
 @serve.deployment(
     name="onnx_model_proxy",
     num_replicas=1,
+    ray_actor_options={
+        "runtime_env": {
+            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0"]
+        }
+    }
 )
 class ONNXModelProxy:
     """Proxy endpoint for ONNX models served by Triton"""
@@ -183,6 +188,11 @@ class ONNXModelProxy:
 @serve.deployment(
     name="resnet50",
     num_replicas=1,
+    ray_actor_options={
+        "runtime_env": {
+            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0"]
+        }
+    }
 )
 class ResNet50Endpoint:
     """Dedicated ResNet50 endpoint"""
@@ -221,6 +231,11 @@ class ResNet50Endpoint:
 @serve.deployment(
     name="mobilenetv2",
     num_replicas=1,
+    ray_actor_options={
+        "runtime_env": {
+            "pip": ["Pillow>=10.0.0", "numpy>=1.24.0,<2.0.0"]
+        }
+    }
 )
 class MobileNetV2Endpoint:
     """Dedicated MobileNetV2 endpoint"""

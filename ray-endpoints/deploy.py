@@ -109,8 +109,17 @@ def main():
         deploy_all()
     
     print("\n📋 Deployed endpoints:")
-    for deployment in serve.list_deployments():
-        print(f"  - {deployment}")
+    try:
+        # Get status to show deployed applications
+        status = serve.status()
+        if hasattr(status, 'applications'):
+            for app_name, app_info in status.applications.items():
+                print(f"  - {app_name}: {app_info.route_prefix}")
+        else:
+            print("  (Use 'ray serve status' to see all deployments)")
+    except Exception as e:
+        print(f"  (Could not list deployments: {e})")
+        print("  Use 'ray serve status' to see all deployments")
 
 
 if __name__ == "__main__":
