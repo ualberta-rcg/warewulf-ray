@@ -232,12 +232,26 @@ def deploy_all_endpoints():
             
             # Build PATH with shared venv if available
             path_components = [os.environ.get("PATH", "")]
+            pythonpath_components = [str(ray_endpoints_dir)]
+            
             if use_shared_venv:
                 path_components.insert(0, f"{shared_venv_path}/bin")
+                # Add venv site-packages to PYTHONPATH
+                # Try to find the correct Python version path
+                import sys
+                for py_ver in [
+                    f"python{sys.version_info.major}.{sys.version_info.minor}",
+                    f"{sys.version_info.major}.{sys.version_info.minor}",
+                    f"{sys.version_info.major}{sys.version_info.minor}",
+                ]:
+                    candidate = f"{shared_venv_path}/lib/{py_ver}/site-packages"
+                    if os.path.exists(candidate):
+                        pythonpath_components.insert(0, candidate)
+                        break
             
             runtime_env = {
                 "env_vars": {
-                    "PYTHONPATH": str(ray_endpoints_dir),
+                    "PYTHONPATH": ":".join(pythonpath_components),
                     "PATH": ":".join(path_components),
                 },
                 # Add pip packages if needed (uncomment and add packages)
@@ -257,40 +271,86 @@ def deploy_all_endpoints():
             )
             class FastAPIDeployment:
                 def __init__(self):
-                    # Ensure Python path is set for imports (critical for worker nodes)
                     import sys
-                    ray_endpoints_dir = Path(__file__).parent.parent.absolute()
-                    if str(ray_endpoints_dir) not in sys.path:
-                        sys.path.insert(0, str(ray_endpoints_dir))
+                    import traceback
                     
-                    # Activate shared venv if available (NFS share)
-                    if shared_venv_available:
-                        try:
-                            shared_venv_path = "/data/ray-endpoints-venv"
-                            # Add venv to sys.path
-                            venv_site_packages = f"{shared_venv_path}/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
-                            if os.path.exists(venv_site_packages) and venv_site_packages not in sys.path:
-                                sys.path.insert(0, venv_site_packages)
-                            print(f"✓ Using shared venv from NFS: {shared_venv_path}")
-                        except Exception as e:
-                            print(f"⚠ Could not use shared venv: {e}")
-                    
-                    # Load Compute Canada modules if available
-                    if modules_to_load:
-                        try:
-                            import subprocess
-                            # Source the module system and load modules
-                            module_cmd = "source /cvmfs/soft.computecanada.ca/config/profile/bash.sh && " + \
-                                       " && ".join([f"module load {m}" for m in modules_to_load])
-                            subprocess.run(["bash", "-c", module_cmd], check=True)
-                            print(f"✓ Loaded Compute Canada modules: {modules_to_load}")
-                        except Exception as e:
-                            print(f"⚠ Could not load Compute Canada modules: {e}")
-                    
-                    # Create endpoint instance and app here (on worker side)
-                    # This avoids serialization issues with FastAPI's thread locks
-                    self.endpoint = endpoint_class()
-                    self._app = self.endpoint.create_app()
+                    try:
+                        # Ensure Python path is set for imports (critical for worker nodes)
+                        ray_endpoints_dir = Path(__file__).parent.parent.absolute()
+                        if str(ray_endpoints_dir) not in sys.path:
+                            sys.path.insert(0, str(ray_endpoints_dir))
+                        
+                        # Activate shared venv if available (NFS share)
+                        if shared_venv_available:
+                            try:
+                                shared_venv_path = "/data/ray-endpoints-venv"
+                                
+                                # Find venv site-packages (try multiple Python version paths)
+                                venv_site_packages = None
+                                for py_ver in [
+                                    f"{sys.version_info.major}.{sys.version_info.minor}",
+                                    f"{sys.version_info.major}{sys.version_info.minor}",
+                                    "python3.12", "python3.11", "python3.10"
+                                ]:
+                                    candidate = f"{shared_venv_path}/lib/{py_ver}/site-packages"
+                                    if os.path.exists(candidate):
+                                        venv_site_packages = candidate
+                                        break
+                                
+                                if venv_site_packages and venv_site_packages not in sys.path:
+                                    sys.path.insert(0, venv_site_packages)
+                                
+                                # Update PATH to include venv bin
+                                venv_bin = f"{shared_venv_path}/bin"
+                                if os.path.exists(venv_bin):
+                                    current_path = os.environ.get("PATH", "")
+                                    if venv_bin not in current_path:
+                                        os.environ["PATH"] = f"{venv_bin}:{current_path}"
+                                
+                                # Set PYTHONPATH environment variable
+                                if venv_site_packages:
+                                    current_pythonpath = os.environ.get("PYTHONPATH", "")
+                                    if venv_site_packages not in current_pythonpath:
+                                        os.environ["PYTHONPATH"] = f"{venv_site_packages}:{current_pythonpath}" if current_pythonpath else venv_site_packages
+                                
+                                print(f"✓ Using shared venv from NFS: {shared_venv_path}")
+                                print(f"  Site-packages: {venv_site_packages}")
+                                print(f"  PATH includes: {venv_bin}")
+                                
+                                # Verify key packages are importable
+                                try:
+                                    import fastapi
+                                    print(f"  ✓ fastapi available: {fastapi.__version__}")
+                                except ImportError as e:
+                                    print(f"  ⚠ fastapi not available: {e}")
+                                
+                            except Exception as e:
+                                print(f"⚠ Could not use shared venv: {e}")
+                                traceback.print_exc()
+                        
+                        # Load Compute Canada modules if available
+                        if modules_to_load:
+                            try:
+                                import subprocess
+                                # Source the module system and load modules
+                                module_cmd = "source /cvmfs/soft.computecanada.ca/config/profile/bash.sh && " + \
+                                           " && ".join([f"module load {m}" for m in modules_to_load])
+                                subprocess.run(["bash", "-c", module_cmd], check=True)
+                                print(f"✓ Loaded Compute Canada modules: {modules_to_load}")
+                            except Exception as e:
+                                print(f"⚠ Could not load Compute Canada modules: {e}")
+                        
+                        # Create endpoint instance and app here (on worker side)
+                        # This avoids serialization issues with FastAPI's thread locks
+                        print(f"Creating endpoint instance: {endpoint_class.DEPLOYMENT_NAME}")
+                        self.endpoint = endpoint_class()
+                        self._app = self.endpoint.create_app()
+                        print(f"✓ Endpoint {endpoint_class.DEPLOYMENT_NAME} initialized successfully")
+                        
+                    except Exception as e:
+                        print(f"✗ Failed to initialize deployment: {e}")
+                        traceback.print_exc()
+                        raise
                 
                 # Ray Serve will call this as an ASGI app
                 # When route_prefix is set, Ray Serve handles routing automatically

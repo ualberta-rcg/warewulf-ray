@@ -169,3 +169,83 @@ EOF
 
 - **Cause**: Missing dependencies, model files, or GPU issues
 - **Solution**: Check logs with `ray logs` or check the Ray dashboard at `http://<head-node-ip>:8265`
+
+## Finding Ray Logs
+
+### Quick Log Location
+
+Run the helper script:
+```bash
+bash show_logs.sh
+```
+
+This will show you:
+- Where Ray session logs are stored
+- How to view specific deployment logs
+- Commands to tail logs in real-time
+
+### Manual Log Location
+
+Ray logs are typically stored in:
+```bash
+/tmp/ray/session_*/logs/
+```
+
+To find the latest session:
+```bash
+# Find latest session directory
+ls -td /tmp/ray/session_* | head -1
+
+# View all logs
+tail -f /tmp/ray/session_*/logs/*.log
+
+# View serve-specific logs
+tail -f /tmp/ray/session_*/logs/serve/*.log
+
+# View replica logs (replace DEPLOYMENT_NAME with your deployment)
+find /tmp/ray/session_*/logs -name '*DEPLOYMENT_NAME*' -exec tail -f {} +
+```
+
+### Using Ray CLI
+
+```bash
+# View all logs
+/opt/ray/bin/ray logs
+
+# View logs for specific deployment
+/opt/ray/bin/ray logs --deployment-name stable-diffusion
+```
+
+### Using Ray Dashboard
+
+Access the dashboard at `http://<head-node-ip>:8265` and navigate to the "Logs" tab to view:
+- Actor logs
+- Serve deployment logs
+- Worker logs
+
+### Common Log Locations
+
+- **Serve logs**: `/tmp/ray/session_*/logs/serve/`
+- **Replica logs**: `/tmp/ray/session_*/logs/serve/deployments/<deployment_name>/`
+- **Worker logs**: `/tmp/ray/session_*/logs/worker-*.log`
+- **Systemd logs** (if using systemd): `sudo journalctl -u ray-head.service -f`
+
+### Debugging Replica Startup Issues
+
+If replicas are failing to start (Internal Server Error), check:
+
+1. **Replica initialization logs**:
+   ```bash
+   find /tmp/ray/session_*/logs -name '*replica*' -o -name '*serve*' | xargs tail -f
+   ```
+
+2. **Check if venv is being used**:
+   Look for messages like "✓ Using shared venv from NFS" in the logs
+
+3. **Check for import errors**:
+   Look for `ImportError` or `ModuleNotFoundError` in logs
+
+4. **Verify dependencies are installed**:
+   ```bash
+   /data/ray-endpoints-venv/bin/pip list | grep -E "diffusers|torch|fastapi"
+   ```
