@@ -158,22 +158,17 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                     import traceback
                     traceback.print_exc()
                     self.model_loaded = False
+                    print(f"   Make sure you have:")
+                    print(f"   1. Sufficient disk space (check: df -h)")
+                    print(f"   2. Network access to huggingface.co")
+                    if self.hf_token:
+                        print(f"   3. Valid HuggingFace token")
             
             # Start loading in background thread (non-blocking)
             loading_thread = threading.Thread(target=load_model, daemon=True)
             loading_thread.start()
             print(f"⏳ Model loading started in background for: {model_name}")
             print(f"   Handler will respond with 202 (poll) until model is ready")
-            except Exception as e:
-                print(f"❌ Failed to load model: {e}")
-                import traceback
-                traceback.print_exc()
-                print(f"   Make sure you have:")
-                print(f"   1. Sufficient disk space (check: df -h)")
-                print(f"   2. Network access to huggingface.co")
-                if self.hf_token:
-                    print(f"   3. Valid HuggingFace token")
-                raise
         
         async def __call__(self, request: Request) -> Any:
             """Handle OpenAI-compatible API requests"""
