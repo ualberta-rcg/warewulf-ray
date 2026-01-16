@@ -2,6 +2,13 @@
 Ray Serve endpoints for ONNX models served via Triton
 """
 
+import sys
+import os
+
+# Ensure we can import Ray (from /opt/ray in Docker container)
+if "/opt/ray/bin" not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = "/opt/ray/bin:" + os.environ.get("PATH", "")
+
 from ray import serve
 from typing import Dict, Any, Optional
 import numpy as np

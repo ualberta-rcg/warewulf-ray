@@ -9,6 +9,7 @@ ray-endpoints/
 ├── README.md                 # This file
 ├── requirements.txt          # Python dependencies for endpoints
 ├── deploy.py                # Main deployment script
+├── deploy.sh                # Wrapper script (uses /opt/ray/bin/python)
 ├── endpoints/                # Individual endpoint deployments
 │   ├── __init__.py
 │   ├── onnx_models.py       # ONNX model endpoints (mobilenet, resnet, etc.)
@@ -24,19 +25,43 @@ ray-endpoints/
 
 ## Setup
 
-1. Activate the virtual environment:
+**Important**: Ray is installed in `/opt/ray` in the Docker container. You have two options:
+
+### Option 1: Use Ray's Python directly (Recommended)
 ```bash
-source /data/ray-endpoints-venv/bin/activate
+# Install dependencies in Ray's environment
+/opt/ray/bin/pip install -r requirements.txt
+
+# Deploy using Ray's Python
+/opt/ray/bin/python deploy.py
 ```
 
-2. Install dependencies:
+### Option 2: Use wrapper script (Easiest)
 ```bash
+# Make script executable (first time only)
+chmod +x deploy.sh
+
+# Run deployment
+./deploy.sh
+```
+
+### Option 3: Use your virtual environment (for endpoint dependencies only)
+```bash
+# Activate the virtual environment for endpoint-specific dependencies
+source /data/ray-endpoints-venv/bin/activate
+
+# Install dependencies (Pillow, numpy, requests, etc.)
 pip install -r requirements.txt
+
+# Deploy using Ray's Python (Ray must come from /opt/ray)
+/opt/ray/bin/python deploy.py
 ```
 
 3. Ensure Ray cluster is running:
 ```bash
 ray status
+# or
+/opt/ray/bin/ray status
 ```
 
 ## Model Locations
@@ -63,12 +88,20 @@ ray status
 
 Deploy all endpoints:
 ```bash
-python deploy.py
+# Using wrapper script (recommended)
+./deploy.sh
+
+# Or using Ray's Python directly
+/opt/ray/bin/python deploy.py
 ```
 
 Deploy specific endpoint:
 ```bash
-python deploy.py --endpoint onnx_models
+# Using wrapper script
+./deploy.sh --endpoint onnx_models
+
+# Or using Ray's Python directly
+/opt/ray/bin/python deploy.py --endpoint onnx_models
 ```
 
 ## Endpoints

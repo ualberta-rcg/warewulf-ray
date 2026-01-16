@@ -8,12 +8,26 @@ import argparse
 import sys
 import os
 
+# Ensure we use Ray from /opt/ray if available
+# This is needed because Ray is installed in /opt/ray in the Docker container
+RAY_PYTHON = "/opt/ray/bin/python"
+if os.path.exists(RAY_PYTHON) and __file__ != os.path.abspath(RAY_PYTHON):
+    # If we're not already using the Ray Python, ensure it's in the path
+    if "/opt/ray/bin" not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = "/opt/ray/bin:" + os.environ.get("PATH", "")
+
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ray import serve
-from ray.serve import Application
-import ray
+try:
+    from ray import serve
+    from ray.serve import Application
+    import ray
+except ImportError:
+    print("❌ Ray not found. Please use /opt/ray/bin/python to run this script.")
+    print("   Or ensure /opt/ray/bin is in your PATH")
+    print("   Current Python: " + sys.executable)
+    sys.exit(1)
 
 
 def deploy_all():
