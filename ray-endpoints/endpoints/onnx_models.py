@@ -1,5 +1,6 @@
 """
 Ray Serve endpoints for ONNX models served via Triton
+Compatible with Ray Serve 2.53.0
 """
 
 import sys
@@ -10,7 +11,8 @@ if "/opt/ray/bin" not in os.environ.get("PATH", ""):
     os.environ["PATH"] = "/opt/ray/bin:" + os.environ.get("PATH", "")
 
 from ray import serve
-from typing import Dict, Any, Optional
+from starlette.requests import Request
+from typing import Dict, Any
 import numpy as np
 from PIL import Image
 import io
@@ -38,42 +40,23 @@ AVAILABLE_MODELS = [
 ]
 
 
-@serve.deployment(
-    name="onnx_model_proxy",
-    num_replicas=1,
-)
-class ONNXModelProxy:
-    """Proxy endpoint for ONNX models served by Triton"""
+class TritonModelHandler:
+    """Shared handler for Triton model inference (not decorated)"""
     
-    def __init__(self):
+    def __init__(self, triton_url: str = TRITON_SERVER_URL):
         """Initialize Triton client"""
-        self.client = tritonhttp.InferenceServerClient(url=TRITON_SERVER_URL)
-        self.models = {}
+        self.client = tritonhttp.InferenceServerClient(url=triton_url)
         
         # Verify Triton server is available
         try:
             if not self.client.is_server_live():
-                raise RuntimeError(f"Triton server at {TRITON_SERVER_URL} is not live")
+                raise RuntimeError(f"Triton server at {triton_url} is not live")
             if not self.client.is_server_ready():
-                raise RuntimeError(f"Triton server at {TRITON_SERVER_URL} is not ready")
+                raise RuntimeError(f"Triton server at {triton_url} is not ready")
         except Exception as e:
             raise RuntimeError(f"Failed to connect to Triton server: {e}")
-        
-        # Load available models
-        self._load_models()
     
-    def _load_models(self):
-        """Load available model metadata"""
-        try:
-            models = self.client.get_model_repository_index()
-            for model in models:
-                if model.get("name") in AVAILABLE_MODELS:
-                    self.models[model["name"]] = model
-                    print(f"✅ Loaded model: {model['name']}")
-        except Exception as e:
-            print(f"⚠️  Warning: Could not load model repository index: {e}")
-    
-    def _preprocess_image(self, image_data: bytes) -> np.ndarray:
+    def preprocess_image(self, image_data: bytes) -> np.ndarray:
         """Preprocess image for model input"""
         # Load image
         image = Image.open(io.BytesIO(image_data))
@@ -100,10 +83,52 @@ class ONNXModelProxy:
         
         return img_array
     
-    async def __call__(self, request) -> Dict[str, Any]:
+    def infer(self, model_name: str, image_data: bytes) -> Dict[str, Any]:
+        """Perform inference on an image"""
+        # Preprocess image
+        input_data = self.preprocess_image(image_data)
+        
+        # Prepare Triton inputs
+        inputs = [
+            httpclient.InferInput("data", input_data.shape, "FP32")
+        ]
+        inputs[0].set_data_from_numpy(input_data)
+        
+        # Perform inference
+        outputs = [
+            httpclient.InferRequestedOutput("fc6")
+        ]
+        
+        response = self.client.infer(model_name, inputs, outputs=outputs)
+        
+        # Get predictions
+        predictions = response.as_numpy("fc6")
+        predicted_class = int(np.argmax(predictions[0]))
+        confidence = float(np.max(predictions[0]))
+        
+        return {
+            "model": model_name,
+            "predicted_class": predicted_class,
+            "confidence": confidence,
+            "predictions": predictions[0].tolist()[:10]  # Top 10
+        }
+
+
+@serve.deployment(
+    name="onnx_model_proxy",
+    num_replicas=1,
+)
+class ONNXModelProxy:
+    """Proxy endpoint for ONNX models served by Triton"""
+    
+    def __init__(self):
+        """Initialize Triton client"""
+        self.handler = TritonModelHandler()
+    
+    async def __call__(self, request: Request) -> Dict[str, Any]:
         """Handle inference request"""
         try:
-            # Get model name and input data
+            # Get model name from query params
             model_name = request.query_params.get("model", "resnet50")
             
             if model_name not in AVAILABLE_MODELS:
@@ -113,91 +138,106 @@ class ONNXModelProxy:
                 }
             
             # Get image data
-            if hasattr(request, "json"):
+            content_type = request.headers.get("content-type", "")
+            
+            if "application/json" in content_type:
+                # JSON with base64 image
                 data = await request.json()
-                image_b64 = data.get("image")
-                if image_b64:
-                    image_data = base64.b64decode(image_b64)
-                else:
-                    return {"error": "No image data provided"}
+                image_b64 = data.get("image", "")
+                if not image_b64:
+                    return {"error": "No image data provided in JSON"}
+                image_data = base64.b64decode(image_b64)
             else:
-                # Assume raw image bytes
+                # Raw image bytes (most common for curl)
                 image_data = await request.body()
-            
-            # Preprocess image
-            input_data = self._preprocess_image(image_data)
-            
-            # Prepare Triton inputs
-            inputs = [
-                httpclient.InferInput("data", input_data.shape, "FP32")
-            ]
-            inputs[0].set_data_from_numpy(input_data)
+                if not image_data:
+                    return {"error": "No image data provided"}
             
             # Perform inference
-            outputs = [
-                httpclient.InferRequestedOutput("fc6")
-            ]
-            
-            response = self.client.infer(model_name, inputs, outputs=outputs)
-            
-            # Get predictions
-            predictions = response.as_numpy("fc6")
-            predicted_class = int(np.argmax(predictions[0]))
-            confidence = float(np.max(predictions[0]))
-            
-            return {
-                "model": model_name,
-                "predicted_class": predicted_class,
-                "confidence": confidence,
-                "predictions": predictions[0].tolist()[:10]  # Top 10
-            }
+            result = self.handler.infer(model_name, image_data)
+            return result
             
         except Exception as e:
             return {
                 "error": str(e),
                 "type": type(e).__name__
             }
-    
-    def list_models(self) -> Dict[str, Any]:
-        """List available models"""
-        return {
-            "available_models": AVAILABLE_MODELS,
-            "triton_server": TRITON_SERVER_URL,
-            "models_loaded": list(self.models.keys())
-        }
 
 
 @serve.deployment(
     name="resnet50",
     num_replicas=1,
 )
-class ResNet50Endpoint(ONNXModelProxy):
+class ResNet50Endpoint:
     """Dedicated ResNet50 endpoint"""
     
     def __init__(self):
-        super().__init__()
+        self.handler = TritonModelHandler()
         self.model_name = "resnet50"
     
-    async def __call__(self, request):
-        # Override to always use resnet50
-        request.query_params = {"model": "resnet50"}
-        return await super().__call__(request)
+    async def __call__(self, request: Request) -> Dict[str, Any]:
+        """Handle inference request for ResNet50"""
+        try:
+            # Get image data
+            content_type = request.headers.get("content-type", "")
+            
+            if "application/json" in content_type:
+                data = await request.json()
+                image_b64 = data.get("image", "")
+                if not image_b64:
+                    return {"error": "No image data provided in JSON"}
+                image_data = base64.b64decode(image_b64)
+            else:
+                image_data = await request.body()
+                if not image_data:
+                    return {"error": "No image data provided"}
+            
+            result = self.handler.infer(self.model_name, image_data)
+            return result
+            
+        except Exception as e:
+            return {
+                "error": str(e),
+                "type": type(e).__name__
+            }
 
 
 @serve.deployment(
     name="mobilenetv2",
     num_replicas=1,
 )
-class MobileNetV2Endpoint(ONNXModelProxy):
+class MobileNetV2Endpoint:
     """Dedicated MobileNetV2 endpoint"""
     
     def __init__(self):
-        super().__init__()
+        self.handler = TritonModelHandler()
         self.model_name = "mobilenetv2"
     
-    async def __call__(self, request):
-        request.query_params = {"model": "mobilenetv2"}
-        return await super().__call__(request)
+    async def __call__(self, request: Request) -> Dict[str, Any]:
+        """Handle inference request for MobileNetV2"""
+        try:
+            # Get image data
+            content_type = request.headers.get("content-type", "")
+            
+            if "application/json" in content_type:
+                data = await request.json()
+                image_b64 = data.get("image", "")
+                if not image_b64:
+                    return {"error": "No image data provided in JSON"}
+                image_data = base64.b64decode(image_b64)
+            else:
+                image_data = await request.body()
+                if not image_data:
+                    return {"error": "No image data provided"}
+            
+            result = self.handler.infer(self.model_name, image_data)
+            return result
+            
+        except Exception as e:
+            return {
+                "error": str(e),
+                "type": type(e).__name__
+            }
 
 
 def deploy():
@@ -216,6 +256,19 @@ def deploy():
     print("✅ Deployed MobileNetV2 endpoint at /mobilenetv2")
     
     print("✅ All ONNX model endpoints deployed!")
+    print("\n📝 Example curl commands:")
+    print("  # Use proxy endpoint with model parameter")
+    print('  curl -X POST "http://localhost:8000/onnx?model=resnet50" \\')
+    print('       -H "Content-Type: image/jpeg" \\')
+    print('       --data-binary @image.jpg')
+    print("\n  # Use dedicated ResNet50 endpoint")
+    print('  curl -X POST "http://localhost:8000/resnet50" \\')
+    print('       -H "Content-Type: image/jpeg" \\')
+    print('       --data-binary @image.jpg')
+    print("\n  # Use dedicated MobileNetV2 endpoint")
+    print('  curl -X POST "http://localhost:8000/mobilenetv2" \\')
+    print('       -H "Content-Type: image/jpeg" \\')
+    print('       --data-binary @image.jpg')
 
 
 if __name__ == "__main__":

@@ -107,8 +107,64 @@ Deploy specific endpoint:
 ## Endpoints
 
 Once deployed, endpoints will be available at:
-- Ray Serve Dashboard: `http://<head-node-ip>:8000`
-- Individual endpoints: `http://<head-node-ip>:8000/<endpoint-name>`
+- Ray Serve Dashboard: `http://<head-node-ip>:8265`
+- Ray Serve API: `http://<head-node-ip>:8000`
+
+### Available Endpoints
+
+1. **Proxy Endpoint** (`/onnx`): Use any model via query parameter
+   ```bash
+   curl -X POST "http://localhost:8000/onnx?model=resnet50" \
+        -H "Content-Type: image/jpeg" \
+        --data-binary @image.jpg
+   ```
+
+2. **ResNet50 Endpoint** (`/resnet50`): Dedicated ResNet50 endpoint
+   ```bash
+   curl -X POST "http://localhost:8000/resnet50" \
+        -H "Content-Type: image/jpeg" \
+        --data-binary @image.jpg
+   ```
+
+3. **MobileNetV2 Endpoint** (`/mobilenetv2`): Dedicated MobileNetV2 endpoint
+   ```bash
+   curl -X POST "http://localhost:8000/mobilenetv2" \
+        -H "Content-Type: image/jpeg" \
+        --data-binary @image.jpg
+   ```
+
+### Testing with curl
+
+Use the provided test script:
+```bash
+chmod +x curl_examples.sh
+./curl_examples.sh
+```
+
+Or test manually:
+```bash
+# Test ResNet50
+curl -X POST "http://localhost:8000/resnet50" \
+     -H "Content-Type: image/jpeg" \
+     --data-binary @test_image.jpg
+
+# Test with proxy endpoint
+curl -X POST "http://localhost:8000/onnx?model=mobilenetv2" \
+     -H "Content-Type: image/jpeg" \
+     --data-binary @test_image.jpg
+```
+
+### Response Format
+
+Successful inference returns:
+```json
+{
+  "model": "resnet50",
+  "predicted_class": 281,
+  "confidence": 0.95,
+  "predictions": [0.95, 0.02, 0.01, ...]
+}
+```
 
 ## Configuration
 
