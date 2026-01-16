@@ -8,18 +8,18 @@ import asyncio
 import time
 import psutil
 import threading
+import io
+import base64
 from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from ray import serve
-from PIL import Image
-import io
-import base64
 
-# Try to import diffusers
+# PIL will be imported when needed (in the handler)
+
+# Try to import diffusers (PIL will be imported when needed)
 try:
     from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
-    from diffusers.utils import load_image
     import torch
     DIFFUSERS_AVAILABLE = True
 except ImportError:
@@ -270,6 +270,7 @@ def create_deployment(model_name: str, model_path: str):
                 # Convert image to requested format
                 if return_format == "base64":
                     # Convert to base64
+                    from PIL import Image
                     buffered = io.BytesIO()
                     image.save(buffered, format="PNG")
                     img_base64 = base64.b64encode(buffered.getvalue()).decode()
