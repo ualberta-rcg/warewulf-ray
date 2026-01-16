@@ -37,6 +37,8 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             "downscale_delay_s": 300,  # Wait 5 minutes before scaling down to zero
             "upscale_delay_s": 0,  # Scale up immediately when request arrives
         },
+        max_queued_requests=1,  # Only queue 1 request while scaling up
+        max_concurrent_queries=1,  # Limit concurrent queries
         ray_actor_options={
             "num_gpus": 1,  # Adjust based on your GPU setup
             "runtime_env": {
@@ -60,6 +62,9 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
         def __init__(self, model_name: str = model_name, hf_token: str = None, max_model_len: int = max_model_len):
             import sys
             import subprocess
+            
+            # Mark as not loaded initially (for scale-to-zero handling)
+            self.model_loaded = False
             
             # Check if vLLM is available, if not try to install it
             # Initialize variables to avoid UnboundLocalError
@@ -113,7 +118,7 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             self.vllm_sampling_params_class = vllm_sampling_params
             
             self.model_name = model_name
-            self.model_loaded = False  # Track if model is loaded (for scale-to-zero)
+            # model_loaded is already set to False at the start of __init__
             self.hf_token = hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
             print(f"🚀 Loading model: {model_name}")
             print(f"   Max context length: {max_model_len}")
@@ -173,8 +178,19 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                 )
         
         async def handle_health(self, request: Request) -> JSONResponse:
-            """Health check endpoint"""
-            return JSONResponse({"status": "healthy", "model": self.model_name})
+            """Health check endpoint - responds immediately even if model is loading"""
+            if not hasattr(self, 'model_loaded') or not self.model_loaded:
+                return JSONResponse({
+                    "status": "scaling_up",
+                    "model": self.model_name,
+                    "message": "Model is currently loading. Please wait and retry.",
+                    "ready": False
+                }, status_code=503)  # Service Unavailable
+            return JSONResponse({
+                "status": "healthy",
+                "model": self.model_name,
+                "ready": True
+            })
         
         async def handle_models(self, request: Request) -> JSONResponse:
             """List available models"""
@@ -192,15 +208,20 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             """Handle chat completion requests"""
             try:
                 # Check if model is loaded (scale-to-zero handling)
+                # This check happens immediately when the handler is called
+                # If model isn't loaded yet, Ray Serve is still initializing the replica
                 if not hasattr(self, 'model_loaded') or not self.model_loaded:
+                    # Return immediate response - model is scaling up
                     return JSONResponse(
                         {
                             "error": "Model is scaling up",
                             "message": "The model is currently scaling up from zero. Please retry in approximately 60 seconds.",
                             "status": "scaling_up",
-                            "estimated_ready_time": 60
+                            "estimated_ready_time": 60,
+                            "retry_after": 60
                         },
-                        status_code=202  # Accepted - processing
+                        status_code=202,  # Accepted - processing
+                        headers={"Retry-After": "60"}  # HTTP standard for retry timing
                     )
                 
                 # Start timing

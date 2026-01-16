@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Clean up failed Ray Serve deployments
+Stop all Ray Serve deployments
 """
 
 import sys
@@ -23,9 +23,9 @@ except ImportError:
 
 
 def main():
-    """Clean up failed deployments"""
+    """Stop all Ray Serve deployments"""
     
-    print("🧹 Cleaning up failed Ray Serve deployments...")
+    print("🧹 Stopping all Ray Serve deployments...")
     
     try:
         ray.init(address="auto", ignore_reinit_error=True)
@@ -40,27 +40,34 @@ def main():
         print(f"\n📊 Current deployments:")
         
         # List all applications
+        apps_to_delete = []
         if hasattr(status, 'applications'):
             for app_name, app_info in status.applications.items():
                 print(f"   Application: {app_name}")
+                apps_to_delete.append(app_name)
                 if hasattr(app_info, 'deployments'):
                     for dep_name, dep_info in app_info.deployments.items():
                         print(f"     - {dep_name}: {dep_info.status if hasattr(dep_info, 'status') else 'unknown'}")
         
-        # Delete the default application if it has failed deployments
-        try:
-            print("\n🗑️  Deleting failed 'default' application...")
-            serve.delete("default")
-            print("✅ Deleted 'default' application")
-        except Exception as e:
-            print(f"⚠️  Could not delete 'default' application: {e}")
-            print("   (This is OK if it doesn't exist)")
+        if not apps_to_delete:
+            print("   No applications found.")
+        else:
+            # Delete all applications
+            print(f"\n🗑️  Deleting {len(apps_to_delete)} application(s)...")
+            for app_name in apps_to_delete:
+                try:
+                    serve.delete(app_name)
+                    print(f"   ✅ Deleted application: {app_name}")
+                except Exception as e:
+                    print(f"   ⚠️  Could not delete '{app_name}': {e}")
         
-        print("\n✅ Cleanup complete!")
-        print("   You can now redeploy with: bash deploy_hf.sh")
+        print("\n✅ All deployments stopped!")
+        print("   You can now redeploy with: bash deploy_hf_v2.sh")
         
     except Exception as e:
         print(f"⚠️  Error during cleanup: {e}")
+        import traceback
+        traceback.print_exc()
         print("   Trying to continue anyway...")
     
     print("\n💡 To verify, check status with:")
