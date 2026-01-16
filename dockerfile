@@ -166,7 +166,34 @@ RUN apt-get install -y openscap-scanner libopenscap25t64 && \
     apt-get autoremove -y && \
     apt-get clean
 
-# --- 7. Install Ray (full installation with all extras) with Python 3.10 ---
+# --- 7. Install Python 3.10 (required for Triton Python API compatibility) ---
+# Ubuntu 24.04 comes with Python 3.12, but Triton's Python bindings are for Python 3.10
+# We need to add the deadsnakes PPA to get Python 3.10
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        software-properties-common \
+        build-essential \
+        zlib1g-dev \
+        libncurses5-dev \
+        libgdbm-dev \
+        libnss3-dev \
+        libssl-dev \
+        libreadline-dev \
+        libffi-dev \
+        libsqlite3-dev \
+        wget \
+        ca-certificates && \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3.10 \
+        python3.10-dev \
+        python3.10-venv \
+        python3.10-distutils && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# --- 7a. Install Ray (full installation with all extras) with Python 3.10 ---
 # Note: Using Python 3.10 to match Triton's Python version for Python API compatibility
 # CUDA toolkit will be provided via CVMFS (Digital Research Alliance of Canada)
 # Install Ray in a virtual environment to avoid PEP 668 and Debian package conflicts
@@ -209,8 +236,8 @@ RUN mkdir -p /opt/ray/lib/python3.10/site-packages && \
 
 # Set up Triton environment variables
 ENV PATH="/opt/tritonserver/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/tritonserver/lib:${LD_LIBRARY_PATH}"
-ENV PYTHONPATH="/opt/tritonserver/python:${PYTHONPATH}"
+ENV LD_LIBRARY_PATH="/opt/tritonserver/lib:${LD_LIBRARY_PATH:-}"
+ENV PYTHONPATH="/opt/tritonserver/python:${PYTHONPATH:-}"
 
 # Verify Triton installation
 RUN echo "🔍 Verifying Triton installation..." && \
