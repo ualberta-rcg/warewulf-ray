@@ -88,7 +88,7 @@ def main():
     parser.add_argument(
         "--model-path",
         type=str,
-        required=True,
+        required=False,
         help="Path to .safetensors model file",
     )
     parser.add_argument(
@@ -169,14 +169,19 @@ def main():
         print(f"⚠️  Ray Serve setup issue: {e}")
         print(f"   Continuing anyway...")
     
-    # Validate model path
-    if not os.path.exists(args.model_path):
-        print(f"❌ Model file not found: {args.model_path}")
-        sys.exit(1)
-    
-    if not args.model_path.endswith('.safetensors'):
-        print(f"⚠️  Warning: Model file is not .safetensors: {args.model_path}")
-        print(f"   Only .safetensors files are supported")
+    # Validate model path (if not listing)
+    if not args.list_models:
+        if not args.model_path:
+            print(f"❌ --model-path is required when deploying")
+            sys.exit(1)
+        
+        if not os.path.exists(args.model_path):
+            print(f"❌ Model file not found: {args.model_path}")
+            sys.exit(1)
+        
+        if not args.model_path.endswith('.safetensors'):
+            print(f"⚠️  Warning: Model file is not .safetensors: {args.model_path}")
+            print(f"   Only .safetensors files are supported")
     
     # Get model name
     model_name = args.model_name or os.path.basename(args.model_path).replace(".safetensors", "")
