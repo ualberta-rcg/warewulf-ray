@@ -125,6 +125,12 @@ curl http://localhost:8000/v2/health/live
 ./start_triton.sh
 ```
 
+**Note:** Ray Serve is configured to listen on `0.0.0.0:8000` for network access. If you need to restart Ray Serve with these settings:
+```bash
+chmod +x restart_serve.sh
+./restart_serve.sh
+```
+
 Deploy specific endpoint:
 ```bash
 # Using wrapper script
@@ -196,7 +202,31 @@ Successful inference returns:
 }
 ```
 
+## Checking Routes and Endpoints
+
+To verify that your endpoints are deployed and accessible:
+
+```bash
+# Use the check script
+chmod +x check_routes.sh
+./check_routes.sh
+
+# Or check manually
+ray serve status
+
+# Or check via dashboard API
+curl http://<head-node-ip>:8265/api/serve/applications/
+```
+
+The check script will:
+- Show Ray Serve status
+- Query the dashboard API for deployed applications
+- Test each endpoint to see if it's accessible
+- Show what's listening on port 8000
+
 ## Configuration
 
 Edit `config/triton_config.yaml` to configure Triton server settings.
 Edit `config/ray_config.yaml` to configure Ray Serve settings.
+
+**Note:** Ray Serve is configured to listen on `0.0.0.0:8000` so it's accessible from the network, not just localhost.

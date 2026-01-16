@@ -95,12 +95,25 @@ def main():
         print(f"❌ Failed to connect to Ray cluster: {e}")
         sys.exit(1)
     
-    # Start Ray Serve
+    # Start Ray Serve with HTTP options to listen on all interfaces
+    # Note: HTTP options can only be set when Serve is first started
+    # If Serve is already running, you need to restart it to change HTTP options
     try:
-        serve.start(detached=True)
-        print("✅ Ray Serve started")
+        from ray.serve.config import HTTPOptions
+        http_options = HTTPOptions(host="0.0.0.0", port=8000)
+        serve.start(detached=True, http_options=http_options)
+        print("✅ Ray Serve started on 0.0.0.0:8000 (accessible from network)")
     except Exception as e:
-        print(f"⚠️  Ray Serve may already be running: {e}")
+        # Serve might already be running - check if we can get status
+        try:
+            status = serve.status()
+            print(f"✅ Ray Serve is already running")
+            print(f"   Note: To change HTTP host/port, restart Ray Serve first")
+            print(f"   Current status: {len(status.applications) if hasattr(status, 'applications') else 'N/A'} applications")
+        except:
+            print(f"⚠️  Ray Serve may already be running: {e}")
+            print("   If endpoints aren't accessible, you may need to restart Ray Serve")
+            print("   with HTTP options: serve.start(http_options=HTTPOptions(host='0.0.0.0', port=8000))")
     
     # Deploy endpoints
     if args.endpoint:
@@ -112,14 +125,44 @@ def main():
     try:
         # Get status to show deployed applications
         status = serve.status()
-        if hasattr(status, 'applications'):
+        if hasattr(status, 'applications') and status.applications:
+            print("  Active applications:")
             for app_name, app_info in status.applications.items():
-                print(f"  - {app_name}: {app_info.route_prefix}")
+                route = getattr(app_info, 'route_prefix', 'N/A')
+                print(f"    - {app_name}: {route}")
         else:
-            print("  (Use 'ray serve status' to see all deployments)")
+            # Try alternative method
+            try:
+                import requests
+                head_node_ip = ray.util.get_node_ip_address()
+                response = requests.get(f"http://{head_node_ip}:8265/api/serve/applications/", timeout=2)
+                if response.status_code == 200:
+                    apps = response.json()
+                    if apps.get('applications'):
+                        print("  Active applications (from API):")
+                        for app_name, app_data in apps['applications'].items():
+                            route = app_data.get('route_prefix', 'N/A')
+                            print(f"    - {app_name}: {route}")
+                    else:
+                        print("  (No applications found via API)")
+                else:
+                    print("  (Could not fetch from API)")
+            except:
+                print("  (Use 'ray serve status' or check dashboard at http://<head-node-ip>:8265)")
     except Exception as e:
         print(f"  (Could not list deployments: {e})")
         print("  Use 'ray serve status' to see all deployments")
+    
+    # Get head node IP for user
+    try:
+        head_node_ip = ray.util.get_node_ip_address()
+        print(f"\n🌐 Access endpoints at:")
+        print(f"   http://{head_node_ip}:8000/onnx")
+        print(f"   http://{head_node_ip}:8000/resnet50")
+        print(f"   http://{head_node_ip}:8000/mobilenetv2")
+        print(f"   http://{head_node_ip}:8000/stable-diffusion")
+    except:
+        print(f"\n🌐 Access endpoints at http://<head-node-ip>:8000")
 
 
 if __name__ == "__main__":
