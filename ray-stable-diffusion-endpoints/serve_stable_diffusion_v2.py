@@ -17,10 +17,17 @@ from ray import serve
 
 # PIL will be imported when needed (in the handler)
 
+# Try to import torch separately (needed even if diffusers import fails)
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    print("⚠️  PyTorch not available. Install with: pip install torch")
+
 # Try to import diffusers (PIL will be imported when needed)
 try:
     from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
-    import torch
     DIFFUSERS_AVAILABLE = True
 except ImportError:
     DIFFUSERS_AVAILABLE = False
@@ -97,9 +104,9 @@ def create_deployment(model_name: str, model_path: str):
                         for mod in ['diffusers', 'torch', 'PIL']:
                             if mod in sys.modules:
                                 del sys.modules[mod]
+                        import torch  # Import torch first
                         from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
-                        import torch
-                        print("✅ Diffusers installed successfully")
+                        print("✅ Diffusers and PyTorch installed successfully")
                     else:
                         raise ImportError("Diffusers not available and cannot install (Ray Python not found)")
                 except Exception as e:
@@ -235,6 +242,16 @@ def create_deployment(model_name: str, model_path: str):
                 height = data.get("height", 512)
                 seed = data.get("seed", None)
                 return_format = data.get("format", "base64")  # base64 or url
+                
+                # Ensure torch is available
+                if not TORCH_AVAILABLE:
+                    try:
+                        import torch
+                    except ImportError:
+                        return JSONResponse(
+                            {"error": "PyTorch is not available. Please install torch."},
+                            status_code=500
+                        )
                 
                 # Generate image
                 generator = None
