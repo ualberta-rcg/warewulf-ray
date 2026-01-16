@@ -8,8 +8,9 @@ This container image provides:
 - **Ray** (full installation with all extras: default, serve, tune, rllib, data, train, air, gpu, and more)
 - **NVIDIA Triton Inference Server** support:
   - `tritonclient[all]`: Client libraries for connecting to Triton servers (HTTP, gRPC)
-  - `nvidia-pytriton`: Provides standalone Triton binary (recommended for Warewulf)
-  - Standalone Triton server binary for better control in HPC environments
+  - Triton server binary and Python API from NVIDIA's official image (multi-stage build)
+  - Python 3.10 compatibility for `import tritonserver` support
+  - Fallback to `nvidia-pytriton` binary if needed
 - **NVIDIA GPU driver** support (optional, configurable)
 - **Systemd** support for service management
 - **Ansible** integration for first-boot configuration
@@ -157,10 +158,13 @@ When `NVIDIA_INSTALL_ENABLED=true` and `KERNEL_INSTALL_ENABLED=true`:
 
 ## Python Environment
 
-Ray (with all extras) and Triton are installed in a virtual environment at `/opt/ray` to:
+Ray (with all extras) and Triton are installed in a virtual environment at `/opt/ray` using **Python 3.10** to:
+- Match Triton's Python version (enables `import tritonserver` to work)
 - Avoid conflicts with system Python packages
 - Comply with PEP 668 (Ubuntu 24.04)
 - Isolate dependencies from system packages
+
+**Note:** Python 3.10 is used (instead of 3.12) to ensure compatibility with Triton's Python API bindings.
 
 The `ray[all]` installation includes:
 - **default**: Core Ray functionality

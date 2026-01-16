@@ -82,7 +82,10 @@ try:
     print(f'  tritonserver (nvidia-pytriton): {tritonserver.__file__}')
     # Check if tritonserver binary is available
     import os
-    triton_bin = '/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver'
+    # Try NVIDIA's Triton binary first, then nvidia-pytriton
+    triton_bin = '/opt/tritonserver/bin/tritonserver'
+    if not os.path.exists(triton_bin):
+        triton_bin = '/opt/ray/lib/python3.10/site-packages/pytriton/tritonserver/bin/tritonserver'
     if os.path.exists(triton_bin):
         print(f'  Triton server binary: {triton_bin} ✅')
     else:

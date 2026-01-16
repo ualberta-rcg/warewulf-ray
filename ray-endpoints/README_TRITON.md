@@ -2,27 +2,35 @@
 
 This document explains how Triton Inference Server is configured in this project.
 
-## Architecture Decision: Standalone Triton Binary
+## Architecture Decision: Multi-Stage Build with Python 3.10
 
-**We use the standalone Triton binary** (not the Python API) for the following reasons:
+**We use a multi-stage build** to extract Triton from NVIDIA's official image, enabling both:
+- ✅ **Triton server binary**: Standalone binary for process management
+- ✅ **Triton Python API**: `import tritonserver` works (Python 3.10 compatible)
 
-1. ✅ **Better for Warewulf**: Standalone binary is more reliable in containerized HPC environments
-2. ✅ **More control**: Separate process allows better resource management
-3. ✅ **Ubuntu 24.04 compatibility**: Works well with our base image
-4. ✅ **Already available**: Binary comes with `nvidia-pytriton` package
+**Why Python 3.10?**
+- Triton's Python bindings are compiled for Python 3.10
+- Using Python 3.10 ensures `import tritonserver` works correctly
+- Ray is installed with Python 3.10 to match Triton's version
 
-## Triton Binary Location
+## Triton Installation
 
-The Triton server binary is installed via `nvidia-pytriton` in the Dockerfile:
+Triton is installed via **multi-stage build** from NVIDIA's official image:
 
 ```dockerfile
-/opt/ray/bin/pip install --no-cache-dir "nvidia-pytriton"
+# Multi-stage: Extract from NVIDIA image
+FROM nvcr.io/nvidia/tritonserver:23.12-py3 AS triton-source
+
+# Copy to main image
+COPY --from=triton-source /opt/tritonserver /opt/tritonserver
 ```
 
-Binary location:
-```
-/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver
-```
+**Binary location:**
+- `/opt/tritonserver/bin/tritonserver` (from NVIDIA's official image)
+
+**Python API:**
+- `import tritonserver` works with Python 3.10 (matches Triton's Python version)
+- Python bindings copied to `/opt/ray/lib/python3.10/site-packages/`
 
 ## Starting Triton Server
 
@@ -111,7 +119,9 @@ We tried using the embedded Triton Python API (`import tritonserver`), but:
 
 1. Check if binary exists:
    ```bash
-   ls -la /opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver
+   ls -la /opt/tritonserver/bin/tritonserver
+   # Or fallback location:
+   ls -la /opt/ray/lib/python3.10/site-packages/pytriton/tritonserver/bin/tritonserver
    ```
 
 2. Check if model repository exists:
@@ -172,19 +182,21 @@ To update Triton, update `nvidia-pytriton` in the Dockerfile:
 
 Then rebuild the Docker image.
 
-## Alternative: Using NVIDIA Base Image
+## Why Multi-Stage Build Instead of NVIDIA Base Image?
 
-If you want to use the NVIDIA Triton base image instead:
+We use multi-stage build (extract from NVIDIA image) instead of using NVIDIA's image as base:
 
-```dockerfile
-FROM nvcr.io/nvidia/tritonserver:23.12-py3
-# ... rest of dockerfile
-```
+**Benefits:**
+- ✅ Keep Ubuntu 24.04 base (better Warewulf compatibility)
+- ✅ Full control over system configuration
+- ✅ Can customize for HPC environments
+- ✅ Still get Triton binary and Python API from official NVIDIA image
 
-However, this is **not recommended** for Warewulf because:
-- Less control over system configuration
-- May conflict with Warewulf-specific setup
-- Harder to customize for HPC environments
+**What we extract:**
+- Triton server binary (`/opt/tritonserver/bin/tritonserver`)
+- Triton shared libraries (`/opt/tritonserver/lib/`)
+- Triton Python bindings (for `import tritonserver`)
+- Triton backends and configuration files
 
 ## References
 

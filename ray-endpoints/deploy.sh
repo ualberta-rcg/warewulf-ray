@@ -40,8 +40,11 @@ fi
 # Install requests if needed (for Triton health check)
 "$RAY_PYTHON" -m pip install -q requests 2>/dev/null || true
 
-# Check if Triton binary is available (standalone binary approach)
-TRITON_BINARY="/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver"
+# Check if Triton binary is available (try NVIDIA's binary first, then nvidia-pytriton)
+TRITON_BINARY="/opt/tritonserver/bin/tritonserver"
+if [ ! -f "$TRITON_BINARY" ]; then
+    TRITON_BINARY="/opt/ray/lib/python3.10/site-packages/pytriton/tritonserver/bin/tritonserver"
+fi
 if [ -f "$TRITON_BINARY" ]; then
     echo "✅ Triton binary found: $TRITON_BINARY"
     echo "   Using standalone Triton binary (recommended for Warewulf with ubuntu:24.04)"

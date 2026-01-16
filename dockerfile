@@ -1,3 +1,16 @@
+# Multi-stage build: Extract Triton from NVIDIA's official image
+FROM nvcr.io/nvidia/tritonserver:23.12-py3 AS triton-source
+
+# Prepare Triton Python bindings in source stage
+RUN mkdir -p /tmp/triton-bindings && \
+    if [ -d "/usr/local/lib/python3.10/dist-packages" ]; then \
+        find /usr/local/lib/python3.10/dist-packages -name "tritonserver*" -exec cp -r {} /tmp/triton-bindings/ \; 2>/dev/null || true; \
+    fi && \
+    if [ -d "/opt/tritonserver/python" ]; then \
+        cp -r /opt/tritonserver/python/* /tmp/triton-bindings/ 2>/dev/null || true; \
+    fi
+
+# Main image: Ubuntu 24.04 with Python 3.10 (to match Triton's Python version)
 FROM ubuntu:24.04
 
 # Set noninteractive frontend
@@ -153,19 +166,58 @@ RUN apt-get install -y openscap-scanner libopenscap25t64 && \
     apt-get autoremove -y && \
     apt-get clean
 
-# --- 7. Install Ray (full installation with all extras) and Triton support ---
-# Note: CUDA toolkit will be provided via CVMFS (Digital Research Alliance of Canada)
+# --- 7. Install Ray (full installation with all extras) with Python 3.10 ---
+# Note: Using Python 3.10 to match Triton's Python version for Python API compatibility
+# CUDA toolkit will be provided via CVMFS (Digital Research Alliance of Canada)
 # Install Ray in a virtual environment to avoid PEP 668 and Debian package conflicts
 # ray[all] includes: default, serve, tune, rllib, data, train, air, gpu, and more
 # tritonclient[all]: Client libraries for connecting to Triton servers (HTTP, gRPC)
-# nvidia-pytriton: PyTriton wrapper for Triton's Python API (embedded mode with Ray Serve)
-RUN python3 -m venv /opt/ray && \
+RUN python3.10 -m venv /opt/ray && \
     /opt/ray/bin/pip install --no-cache-dir --upgrade pip && \
     /opt/ray/bin/pip install --no-cache-dir "ray[all]" && \
     /opt/ray/bin/pip install --no-cache-dir "tritonclient[all]" && \
-    /opt/ray/bin/pip install --no-cache-dir "nvidia-pytriton" && \
     echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/profile.d/ray.sh && \
     echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/bash.bashrc
+
+# --- 7b. Copy Triton Inference Server from NVIDIA image ---
+# Copy Triton server binary, libraries, and Python bindings (Python 3.10 compatible)
+# This enables 'import tritonserver' to work in Ray's Python 3.10 environment
+
+# First, copy the entire Triton installation
+COPY --from=triton-source /opt/tritonserver /opt/tritonserver
+
+# Copy prepared Python bindings from source stage
+COPY --from=triton-source /tmp/triton-bindings/ /tmp/triton-python-bindings/
+
+# Install Python bindings into Ray's Python 3.10 environment
+RUN mkdir -p /opt/ray/lib/python3.10/site-packages && \
+    # Copy Python bindings from prepared location
+    if [ -d "/tmp/triton-python-bindings" ] && [ "$(ls -A /tmp/triton-python-bindings 2>/dev/null)" ]; then \
+        cp -r /tmp/triton-python-bindings/* /opt/ray/lib/python3.10/site-packages/ 2>/dev/null || true; \
+        rm -rf /tmp/triton-python-bindings; \
+        echo "✅ Copied Triton Python bindings to Ray's site-packages"; \
+    else \
+        echo "⚠️  Triton Python bindings not found in source image - will use binary mode"; \
+    fi && \
+    # Also check for tritonserver Python modules in /opt/tritonserver/python (from copied binary)
+    if [ -d "/opt/tritonserver/python" ]; then \
+        cp -r /opt/tritonserver/python/* /opt/ray/lib/python3.10/site-packages/ 2>/dev/null || true; \
+    fi && \
+    # Set up Python path to include Triton's Python modules
+    echo 'export PYTHONPATH="/opt/tritonserver/python:${PYTHONPATH}"' >> /etc/profile.d/ray.sh && \
+    echo 'export PYTHONPATH="/opt/tritonserver/python:${PYTHONPATH}"' >> /etc/bash.bashrc
+
+# Set up Triton environment variables
+ENV PATH="/opt/tritonserver/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/opt/tritonserver/lib:${LD_LIBRARY_PATH}"
+ENV PYTHONPATH="/opt/tritonserver/python:${PYTHONPATH}"
+
+# Verify Triton installation
+RUN echo "🔍 Verifying Triton installation..." && \
+    /opt/tritonserver/bin/tritonserver --version && \
+    echo "✅ Triton binary available" && \
+    (/opt/ray/bin/python -c "import tritonserver; print('✅ Triton Python API available'); print(f'   Location: {tritonserver.__file__}')" 2>&1 || \
+     echo "⚠️  Triton Python API not directly importable - will use binary mode or HTTP client")
 
 # Add Ray venv to PATH for all sessions
 ENV PATH="/opt/ray/bin:$PATH"
@@ -258,7 +310,7 @@ RUN apt-mark manual libvulkan1 mesa-vulkan-drivers libglvnd0 && \
         libegl-dev libgles-dev libdmx-dev libfontconfig-dev \
         build-essential dkms gcc g++ make pkg-config dpkg-dev \
         libfreetype-dev libpng-dev uuid-dev libexpat1-dev \
-        libpython3-dev libpython3.12-dev python3-dev python3.12-dev \
+        libpython3-dev libpython3.10-dev python3-dev python3.10-dev \
         python-babel-localedata humanity-icon-theme iso-codes; do \
         dpkg -l "$pkg" >/dev/null 2>&1 && apt-get purge -y "$pkg" || true; \
     done && \

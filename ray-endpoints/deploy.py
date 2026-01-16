@@ -115,7 +115,10 @@ def main():
     # /opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver
     print("🔍 Checking Triton setup...")
     
-    TRITON_BINARY = "/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver"
+    # Try NVIDIA's Triton binary first (from multi-stage build), fallback to nvidia-pytriton
+    TRITON_BINARY = "/opt/tritonserver/bin/tritonserver"
+    if not os.path.exists(TRITON_BINARY):
+        TRITON_BINARY = "/opt/ray/lib/python3.10/site-packages/pytriton/tritonserver/bin/tritonserver"
     TRITON_URL = "localhost:8000"
     
     # Check if Triton binary exists

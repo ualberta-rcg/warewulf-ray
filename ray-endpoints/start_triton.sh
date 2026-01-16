@@ -4,7 +4,11 @@
 
 set -e
 
-TRITON_BINARY="/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver"
+# Try NVIDIA's Triton binary first (from multi-stage build), fallback to nvidia-pytriton
+TRITON_BINARY="/opt/tritonserver/bin/tritonserver"
+if [ ! -f "$TRITON_BINARY" ]; then
+    TRITON_BINARY="/opt/ray/lib/python3.10/site-packages/pytriton/tritonserver/bin/tritonserver"
+fi
 MODEL_REPOSITORY="/data/ray-triton/model_repository"
 HTTP_PORT=8000
 GRPC_PORT=8001
