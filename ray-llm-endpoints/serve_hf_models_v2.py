@@ -5,6 +5,8 @@ Version 2: Separate deployments per model with autoscaling
 
 import os
 import asyncio
+import time
+import psutil
 from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -42,7 +44,8 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                     "vllm>=0.10.1",
                     "openai>=1.0.0",
                     "transformers>=4.30.0",
-                    "torch>=2.0.0"
+                    "torch>=2.0.0",
+                    "psutil>=5.9.0"
                 ],
                 "env_vars": {
                     "HF_TOKEN": os.environ.get("HF_TOKEN", ""),  # Pass HF token via env
@@ -110,6 +113,7 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             self.vllm_sampling_params_class = vllm_sampling_params
             
             self.model_name = model_name
+            self.model_loaded = False  # Track if model is loaded (for scale-to-zero)
             self.hf_token = hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
             print(f"🚀 Loading model: {model_name}")
             print(f"   Max context length: {max_model_len}")
@@ -139,6 +143,7 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                 
                 # Use the stored LLM class
                 self.llm = self.vllm_llm_class(**llm_kwargs)
+                self.model_loaded = True
                 print(f"✅ Model loaded: {model_name}")
             except Exception as e:
                 print(f"❌ Failed to load model: {e}")
@@ -186,6 +191,24 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
         async def handle_chat_completions(self, request: Request) -> Any:
             """Handle chat completion requests"""
             try:
+                # Check if model is loaded (scale-to-zero handling)
+                if not hasattr(self, 'model_loaded') or not self.model_loaded:
+                    return JSONResponse(
+                        {
+                            "error": "Model is scaling up",
+                            "message": "The model is currently scaling up from zero. Please retry in approximately 60 seconds.",
+                            "status": "scaling_up",
+                            "estimated_ready_time": 60
+                        },
+                        status_code=202  # Accepted - processing
+                    )
+                
+                # Start timing
+                query_start_time = time.time()
+                
+                # Get resource usage before query
+                metrics_start = self._get_resource_metrics()
+                
                 data = await request.json()
                 messages = data.get("messages", [])
                 stream = data.get("stream", False)
@@ -202,15 +225,32 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                 )
                 
                 if stream:
-                    # Streaming response
+                    # Streaming response (metrics added at end)
                     return StreamingResponse(
-                        self._generate_stream(prompt, sampling_params),
+                        self._generate_stream(prompt, sampling_params, query_start_time),
                         media_type="text/event-stream"
                     )
                 else:
                     # Non-streaming response
                     outputs = self.llm.generate([prompt], sampling_params)
                     generated_text = outputs[0].outputs[0].text
+                    
+                    # Calculate query time
+                    query_end_time = time.time()
+                    query_duration = query_end_time - query_start_time
+                    
+                    # Get resource usage after query
+                    metrics_end = self._get_resource_metrics()
+                    
+                    # Calculate resource usage
+                    compute_metrics = {
+                        "query_duration_seconds": round(query_duration, 3),
+                        "cpu_percent": metrics_end.get("cpu_percent", 0),
+                        "memory_mb": metrics_end.get("memory_mb", 0),
+                        "gpu_memory_allocated_mb": metrics_end.get("gpu_memory_allocated_mb", 0),
+                        "gpu_memory_reserved_mb": metrics_end.get("gpu_memory_reserved_mb", 0),
+                        "gpu_utilization_percent": metrics_end.get("gpu_utilization_percent", 0),
+                    }
                     
                     return JSONResponse({
                         "id": "chatcmpl-123",
@@ -229,7 +269,8 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                             "prompt_tokens": len(prompt.split()),
                             "completion_tokens": len(generated_text.split()),
                             "total_tokens": len(prompt.split()) + len(generated_text.split())
-                        }
+                        },
+                        "compute_metrics": compute_metrics
                     })
             except Exception as e:
                 return JSONResponse(
@@ -253,12 +294,70 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             prompt_parts.append("Assistant:")
             return "\n".join(prompt_parts)
         
-        async def _generate_stream(self, prompt: str, sampling_params):
-            """Generate streaming response"""
+        def _get_resource_metrics(self):
+            """Get current resource usage metrics"""
+            metrics = {}
+            try:
+                # CPU usage
+                metrics["cpu_percent"] = psutil.cpu_percent(interval=0.1)
+                
+                # Memory usage
+                process = psutil.Process()
+                memory_info = process.memory_info()
+                metrics["memory_mb"] = round(memory_info.rss / (1024 * 1024), 2)
+                
+                # GPU metrics (if available)
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        device = torch.cuda.current_device()
+                        metrics["gpu_memory_allocated_mb"] = round(torch.cuda.memory_allocated(device) / (1024 * 1024), 2)
+                        metrics["gpu_memory_reserved_mb"] = round(torch.cuda.memory_reserved(device) / (1024 * 1024), 2)
+                        
+                        # Try to get GPU utilization (requires nvidia-ml-py)
+                        try:
+                            import pynvml
+                            pynvml.nvmlInit()
+                            handle = pynvml.nvmlDeviceGetHandleByIndex(device)
+                            util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                            metrics["gpu_utilization_percent"] = util.gpu
+                        except:
+                            metrics["gpu_utilization_percent"] = None
+                    else:
+                        metrics["gpu_memory_allocated_mb"] = None
+                        metrics["gpu_memory_reserved_mb"] = None
+                        metrics["gpu_utilization_percent"] = None
+                except ImportError:
+                    metrics["gpu_memory_allocated_mb"] = None
+                    metrics["gpu_memory_reserved_mb"] = None
+                    metrics["gpu_utilization_percent"] = None
+            except Exception as e:
+                # If metrics collection fails, return empty dict
+                pass
+            
+            return metrics
+        
+        async def _generate_stream(self, prompt: str, sampling_params, query_start_time):
+            """Generate streaming response with metrics"""
             # For streaming, we need to use async engine
             # This is a simplified version - for production, use AsyncLLMEngine
             outputs = self.llm.generate([prompt], sampling_params)
             generated_text = outputs[0].outputs[0].text
+            
+            # Calculate query time
+            query_end_time = time.time()
+            query_duration = query_end_time - query_start_time
+            
+            # Get resource usage
+            metrics = self._get_resource_metrics()
+            compute_metrics = {
+                "query_duration_seconds": round(query_duration, 3),
+                "cpu_percent": metrics.get("cpu_percent", 0),
+                "memory_mb": metrics.get("memory_mb", 0),
+                "gpu_memory_allocated_mb": metrics.get("gpu_memory_allocated_mb", 0),
+                "gpu_memory_reserved_mb": metrics.get("gpu_memory_reserved_mb", 0),
+                "gpu_utilization_percent": metrics.get("gpu_utilization_percent", 0),
+            }
             
             # Simulate streaming by chunking the response
             words = generated_text.split()
@@ -277,6 +376,20 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                 yield f"data: {chunk}\n\n"
                 await asyncio.sleep(0.01)  # Small delay for streaming effect
             
+            # Send metrics as final chunk
+            metrics_chunk = {
+                "id": "chatcmpl-123",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": self.model_name.replace("/", "-"),
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop"
+                }],
+                "compute_metrics": compute_metrics
+            }
+            yield f"data: {metrics_chunk}\n\n"
             yield "data: [DONE]\n\n"
     
     return HuggingFaceLLMEndpoint
