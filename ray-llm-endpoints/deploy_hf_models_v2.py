@@ -263,15 +263,6 @@ def main():
         if hf_token:
             print(f"   Using HuggingFace token for authentication")
         
-        # Generate compute report if requested
-        if args.compute_report:
-            print("\n📈 Generating compute usage report...")
-            report = get_compute_report()
-            print(json.dumps(report, indent=2))
-            print("\n💾 Report saved to compute_report.json")
-            with open("compute_report.json", "w") as f:
-                json.dump(report, f, indent=2)
-        
     except Exception as e:
         print(f"❌ Deployment failed: {e}")
         import traceback

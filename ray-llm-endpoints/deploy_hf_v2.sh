@@ -55,7 +55,6 @@ if [ "$DEPLOY_BOTH" = "true" ]; then
     "$RAY_PYTHON" deploy_hf_models_v2.py \
         --model "$MODEL1" \
         ${HF_TOKEN:+--hf-token "$HF_TOKEN"} \
-        --compute-report \
         "$@"
     
     # Wait a bit for first deployment to complete
@@ -67,7 +66,6 @@ if [ "$DEPLOY_BOTH" = "true" ]; then
     "$RAY_PYTHON" deploy_hf_models_v2.py \
         --model "$MODEL2" \
         ${HF_TOKEN:+--hf-token "$HF_TOKEN"} \
-        --compute-report \
         "$@"
     
     echo ""

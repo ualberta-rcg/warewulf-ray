@@ -47,7 +47,8 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                     "openai>=1.0.0",
                     "transformers>=4.30.0",
                     "torch>=2.0.0",
-                    "psutil>=5.9.0"
+                    "psutil>=5.9.0",
+                    "nvidia-ml-py>=12.0.0"  # For GPU utilization metrics
                 ],
                 "env_vars": {
                     "HF_TOKEN": os.environ.get("HF_TOKEN", ""),  # Pass HF token via env
@@ -252,9 +253,6 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                 # Start timing
                 query_start_time = time.time()
                 
-                # Get resource usage before query
-                metrics_start = self._get_resource_metrics()
-                
                 data = await request.json()
                 messages = data.get("messages", [])
                 stream = data.get("stream", False)
@@ -285,17 +283,20 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                     query_end_time = time.time()
                     query_duration = query_end_time - query_start_time
                     
-                    # Get resource usage after query
+                    # Get resource usage after query (from replica)
                     metrics_end = self._get_resource_metrics()
                     
-                    # Calculate resource usage
+                    # Calculate resource usage (replica-specific metrics)
                     compute_metrics = {
                         "query_duration_seconds": round(query_duration, 3),
-                        "cpu_percent": metrics_end.get("cpu_percent", 0),
-                        "memory_mb": metrics_end.get("memory_mb", 0),
-                        "gpu_memory_allocated_mb": metrics_end.get("gpu_memory_allocated_mb", 0),
-                        "gpu_memory_reserved_mb": metrics_end.get("gpu_memory_reserved_mb", 0),
-                        "gpu_utilization_percent": metrics_end.get("gpu_utilization_percent", 0),
+                        "replica_cpu_percent": metrics_end.get("cpu_percent", 0),
+                        "replica_memory_mb": metrics_end.get("memory_mb", 0),
+                        "replica_num_cpus": metrics_end.get("num_cpus", 1),
+                        "replica_gpu_memory_allocated_mb": metrics_end.get("gpu_memory_allocated_mb", 0),
+                        "replica_gpu_memory_reserved_mb": metrics_end.get("gpu_memory_reserved_mb", 0),
+                        "replica_gpu_memory_total_mb": metrics_end.get("gpu_memory_total_mb", 0),
+                        "replica_gpu_memory_used_mb": metrics_end.get("gpu_memory_used_mb", metrics_end.get("gpu_memory_allocated_mb", 0)),
+                        "replica_gpu_utilization_percent": metrics_end.get("gpu_utilization_percent", 0),
                     }
                     
                     return JSONResponse({
@@ -341,45 +342,77 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             return "\n".join(prompt_parts)
         
         def _get_resource_metrics(self):
-            """Get current resource usage metrics"""
+            """Get current resource usage metrics from the replica"""
             metrics = {}
             try:
-                # CPU usage
-                metrics["cpu_percent"] = psutil.cpu_percent(interval=0.1)
-                
-                # Memory usage
+                # Get current process
                 process = psutil.Process()
+                
+                # CPU usage - get per-process CPU percent
+                metrics["cpu_percent"] = round(process.cpu_percent(interval=0.1), 2)
+                
+                # Memory usage (RSS - Resident Set Size)
                 memory_info = process.memory_info()
                 metrics["memory_mb"] = round(memory_info.rss / (1024 * 1024), 2)
+                
+                # Number of CPUs used by this process
+                metrics["num_cpus"] = len(process.cpu_affinity()) if hasattr(process, 'cpu_affinity') else 1
                 
                 # GPU metrics (if available)
                 try:
                     import torch
                     if torch.cuda.is_available():
                         device = torch.cuda.current_device()
-                        metrics["gpu_memory_allocated_mb"] = round(torch.cuda.memory_allocated(device) / (1024 * 1024), 2)
-                        metrics["gpu_memory_reserved_mb"] = round(torch.cuda.memory_reserved(device) / (1024 * 1024), 2)
                         
-                        # Try to get GPU utilization (requires nvidia-ml-py)
+                        # GPU memory allocated (actually used by tensors)
+                        gpu_allocated = torch.cuda.memory_allocated(device)
+                        metrics["gpu_memory_allocated_mb"] = round(gpu_allocated / (1024 * 1024), 2)
+                        
+                        # GPU memory reserved (allocated by PyTorch)
+                        gpu_reserved = torch.cuda.memory_reserved(device)
+                        metrics["gpu_memory_reserved_mb"] = round(gpu_reserved / (1024 * 1024), 2)
+                        
+                        # Total GPU memory
+                        gpu_total = torch.cuda.get_device_properties(device).total_memory
+                        metrics["gpu_memory_total_mb"] = round(gpu_total / (1024 * 1024), 2)
+                        
+                        # GPU utilization (requires nvidia-ml-py)
                         try:
                             import pynvml
                             pynvml.nvmlInit()
                             handle = pynvml.nvmlDeviceGetHandleByIndex(device)
                             util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                             metrics["gpu_utilization_percent"] = util.gpu
+                            
+                            # GPU memory info from NVML (more accurate)
+                            mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                            metrics["gpu_memory_used_mb"] = round(mem_info.used / (1024 * 1024), 2)
+                            metrics["gpu_memory_free_mb"] = round(mem_info.free / (1024 * 1024), 2)
                         except:
+                            # Fallback if pynvml not available
                             metrics["gpu_utilization_percent"] = None
+                            metrics["gpu_memory_used_mb"] = None
+                            metrics["gpu_memory_free_mb"] = None
                     else:
-                        metrics["gpu_memory_allocated_mb"] = None
-                        metrics["gpu_memory_reserved_mb"] = None
-                        metrics["gpu_utilization_percent"] = None
+                        metrics["gpu_memory_allocated_mb"] = 0
+                        metrics["gpu_memory_reserved_mb"] = 0
+                        metrics["gpu_memory_total_mb"] = 0
+                        metrics["gpu_utilization_percent"] = 0
                 except ImportError:
-                    metrics["gpu_memory_allocated_mb"] = None
-                    metrics["gpu_memory_reserved_mb"] = None
-                    metrics["gpu_utilization_percent"] = None
+                    metrics["gpu_memory_allocated_mb"] = 0
+                    metrics["gpu_memory_reserved_mb"] = 0
+                    metrics["gpu_memory_total_mb"] = 0
+                    metrics["gpu_utilization_percent"] = 0
             except Exception as e:
-                # If metrics collection fails, return empty dict
-                pass
+                # If metrics collection fails, return zeros
+                metrics = {
+                    "cpu_percent": 0,
+                    "memory_mb": 0,
+                    "num_cpus": 0,
+                    "gpu_memory_allocated_mb": 0,
+                    "gpu_memory_reserved_mb": 0,
+                    "gpu_utilization_percent": 0
+                }
             
             return metrics
         
@@ -398,11 +431,14 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             metrics = self._get_resource_metrics()
             compute_metrics = {
                 "query_duration_seconds": round(query_duration, 3),
-                "cpu_percent": metrics.get("cpu_percent", 0),
-                "memory_mb": metrics.get("memory_mb", 0),
-                "gpu_memory_allocated_mb": metrics.get("gpu_memory_allocated_mb", 0),
-                "gpu_memory_reserved_mb": metrics.get("gpu_memory_reserved_mb", 0),
-                "gpu_utilization_percent": metrics.get("gpu_utilization_percent", 0),
+                "replica_cpu_percent": metrics.get("cpu_percent", 0),
+                "replica_memory_mb": metrics.get("memory_mb", 0),
+                "replica_num_cpus": metrics.get("num_cpus", 1),
+                "replica_gpu_memory_allocated_mb": metrics.get("gpu_memory_allocated_mb", 0),
+                "replica_gpu_memory_reserved_mb": metrics.get("gpu_memory_reserved_mb", 0),
+                "replica_gpu_memory_total_mb": metrics.get("gpu_memory_total_mb", 0),
+                "replica_gpu_memory_used_mb": metrics.get("gpu_memory_used_mb", metrics.get("gpu_memory_allocated_mb", 0)),
+                "replica_gpu_utilization_percent": metrics.get("gpu_utilization_percent", 0),
             }
             
             # Simulate streaming by chunking the response
