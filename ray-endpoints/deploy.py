@@ -577,20 +577,26 @@ def deploy_all_endpoints():
                 # Ray Serve ASGI interface - forward to FastAPI app
                 async def __call__(self, scope, receive, send):
                     """ASGI interface - forward requests to FastAPI app"""
+                    import traceback
                     try:
                         # Ensure app is initialized
                         if not hasattr(self, '_app') or self._app is None:
-                            raise RuntimeError(f"FastAPI app not initialized for {endpoint_class.DEPLOYMENT_NAME}")
+                            error_msg = f"FastAPI app not initialized for {endpoint_class.DEPLOYMENT_NAME}"
+                            print(f"✗ {error_msg}")
+                            raise RuntimeError(error_msg)
                         
                         # Forward directly to FastAPI app (which is ASGI-compatible)
                         # Ray Serve strips the route_prefix before forwarding, so paths are correct
                         await self._app(scope, receive, send)
                     except Exception as e:
-                        # Handle errors gracefully - log and re-raise so Ray Serve can handle it
-                        import traceback
-                        error_msg = f"Error in ASGI handler for {endpoint_class.DEPLOYMENT_NAME}: {e}"
+                        # Handle errors gracefully - log full details
+                        error_msg = f"✗ Error in ASGI handler for {endpoint_class.DEPLOYMENT_NAME}: {type(e).__name__}: {e}"
                         print(error_msg)
+                        print("Full traceback:")
                         print(traceback.format_exc())
+                        print(f"Scope: {scope.get('type', 'unknown')} {scope.get('path', 'unknown')}")
+                        print(f"App type: {type(self._app)}")
+                        print(f"App has __call__: {hasattr(self._app, '__call__')}")
                         # Re-raise so Ray Serve can handle the error properly
                         raise
             
