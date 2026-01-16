@@ -27,7 +27,6 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
     
     @serve.deployment(
         name=deployment_name,
-        num_replicas=0,  # Start at 0 (scale to zero)
         autoscaling_config={
             "min_replicas": 0,  # Scale to zero
             "max_replicas": 1,  # Max 1 replica per model
