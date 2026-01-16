@@ -104,3 +104,12 @@ model_repository = "s3://bucket-name/models"
 - Models are loaded on-demand when first requested
 - Each replica runs its own Triton Server instance
 - GPU resources are allocated per replica (`num_gpus: 1`)
+
+## Triton Server Location
+
+When using PyTriton (embedded mode), the Triton Server binary is located at:
+```
+/opt/ray/lib/python3.12/site-packages/pytriton/tritonserver/bin/tritonserver
+```
+
+This is automatically used by PyTriton when you import `tritonserver` in Python. You don't need to call this binary directly - PyTriton handles it automatically.

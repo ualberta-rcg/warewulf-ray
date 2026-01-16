@@ -78,8 +78,21 @@ def deploy_all_endpoints():
     
     # Start Ray Serve with HTTP options to listen on all interfaces (0.0.0.0)
     # This allows access from outside the head node
-    # Also clean up any stale/failed deployments
+    # HTTP options are cluster-scoped and can't be changed at runtime, so we need to restart
     try:
+        # Check if Serve is already running and shutdown if needed
+        try:
+            serve.start(detached=True)
+            # If we get here, Serve was already running - shutdown to apply new config
+            print("⚠ Ray Serve already running, restarting with new HTTP config...")
+            serve.shutdown()
+            import time
+            time.sleep(2)  # Wait for shutdown to complete
+        except Exception:
+            # Serve wasn't running, that's fine
+            pass
+        
+        # Now start with correct HTTP options
         from ray.serve.config import HTTPOptions
         http_options = HTTPOptions(
             host="0.0.0.0",  # Listen on all interfaces
@@ -144,11 +157,15 @@ def deploy_all_endpoints():
                     self._app = self.endpoint.create_app()
                 
                 # Ray Serve will call this as an ASGI app
+                # When route_prefix is set, Ray Serve handles routing automatically
+                # We forward the ASGI interface directly to FastAPI
                 async def __call__(self, scope, receive, send):
                     # Forward directly to FastAPI app (which is ASGI-compatible)
+                    # Ray Serve strips the route_prefix before forwarding, so paths are correct
                     await self._app(scope, receive, send)
             
             # Deploy using serve.run with route_prefix
+            # In Ray Serve 2.53.0, route_prefix properly routes to the deployment
             serve.run(
                 FastAPIDeployment.bind(),
                 name=endpoint_class.DEPLOYMENT_NAME,
@@ -171,7 +188,21 @@ def deploy_single_endpoint(endpoint_file: str):
     endpoint_class = load_endpoint_from_file(endpoint_file)
     
     # Start Ray Serve with HTTP options to listen on all interfaces (0.0.0.0)
+    # HTTP options are cluster-scoped and can't be changed at runtime, so we need to restart
     try:
+        # Check if Serve is already running and shutdown if needed
+        try:
+            serve.start(detached=True)
+            # If we get here, Serve was already running - shutdown to apply new config
+            print("⚠ Ray Serve already running, restarting with new HTTP config...")
+            serve.shutdown()
+            import time
+            time.sleep(2)  # Wait for shutdown to complete
+        except Exception:
+            # Serve wasn't running, that's fine
+            pass
+        
+        # Now start with correct HTTP options
         from ray.serve.config import HTTPOptions
         http_options = HTTPOptions(
             host="0.0.0.0",  # Listen on all interfaces
@@ -180,8 +211,9 @@ def deploy_single_endpoint(endpoint_file: str):
         serve.start(detached=True, http_options=http_options)
         print("✓ Ray Serve started on 0.0.0.0:8000 (accessible from network)")
     except Exception as e:
-        # If HTTPOptions doesn't exist or serve is already running, try without it
+        # If HTTPOptions doesn't exist or serve is already running, try alternative methods
         try:
+            # Try with dict format
             serve.start(detached=True, http_options={"host": "0.0.0.0", "port": 8000})
             print("✓ Ray Serve started on 0.0.0.0:8000 (accessible from network)")
         except Exception as e2:
@@ -207,9 +239,9 @@ def deploy_single_endpoint(endpoint_file: str):
             self.endpoint = endpoint_class()
             self._app = self.endpoint.create_app()
         
-        # Make the class itself callable as an ASGI app
+        # Ray Serve will call this as an ASGI app
         async def __call__(self, scope, receive, send):
-            # Forward to FastAPI app
+            # Forward directly to FastAPI app (which is ASGI-compatible)
             await self._app(scope, receive, send)
     
     serve.run(
