@@ -106,7 +106,22 @@ import sys
 import time
 
 try:
-    ray.init(ignore_reinit_error=True)
+    # Get Ray address from system
+    import subprocess
+    import socket
+    try:
+        result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
+        if result.returncode == 0 and result.stdout.strip():
+            host_ip = result.stdout.strip().split()[0]
+            ray_address = f"{host_ip}:6379"
+        else:
+            hostname = socket.gethostname()
+            host_ip = socket.gethostbyname(hostname)
+            ray_address = f"{host_ip}:6379"
+    except Exception:
+        ray_address = "localhost:6379"
+    
+    ray.init(address=ray_address, ignore_reinit_error=True)
     serve.start(detached=True)
     
     # Wait a moment for deployments to register

@@ -19,11 +19,27 @@ from ray import serve
 import ray
 
 try:
-    # Try to connect to Ray
+    # Try to connect to Ray - get address from system
+    import subprocess
+    import socket
+    
+    # Get head node IP
     try:
-        ray.init(ignore_reinit_error=True)
+        result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
+        if result.returncode == 0 and result.stdout.strip():
+            host_ip = result.stdout.strip().split()[0]
+            ray_address = f"{host_ip}:6379"
+        else:
+            hostname = socket.gethostname()
+            host_ip = socket.gethostbyname(hostname)
+            ray_address = f"{host_ip}:6379"
+    except Exception:
+        ray_address = "localhost:6379"
+    
+    try:
+        ray.init(address=ray_address, ignore_reinit_error=True)
     except Exception as e:
-        print(f"⚠ Could not connect to Ray: {e}")
+        print(f"⚠ Could not connect to Ray at {ray_address}: {e}")
         print("  Ray may not be running")
         exit(0)
     
@@ -82,7 +98,22 @@ import ray
 import sys
 
 try:
-    ray.init(ignore_reinit_error=True)
+    # Get Ray address from system
+    import subprocess
+    import socket
+    try:
+        result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
+        if result.returncode == 0 and result.stdout.strip():
+            host_ip = result.stdout.strip().split()[0]
+            ray_address = f"{host_ip}:6379"
+        else:
+            hostname = socket.gethostname()
+            host_ip = socket.gethostbyname(hostname)
+            ray_address = f"{host_ip}:6379"
+    except Exception:
+        ray_address = "localhost:6379"
+    
+    ray.init(address=ray_address, ignore_reinit_error=True)
     
     # Check Ray cluster status
     print("✓ Ray cluster is accessible")

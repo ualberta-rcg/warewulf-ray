@@ -14,8 +14,27 @@ def cleanup_serve():
     if ray_address:
         ray.init(address=ray_address, ignore_reinit_error=True)
     else:
-        # Don't use 'auto' - connect to local Ray
-        ray.init(ignore_reinit_error=True)
+        # Get the Ray address from the running cluster
+        if ray.is_initialized():
+            pass  # Already connected
+        else:
+            # Try to get address from system
+            try:
+                import subprocess
+                import socket
+                # Get head node IP
+                result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
+                if result.returncode == 0 and result.stdout.strip():
+                    host_ip = result.stdout.strip().split()[0]
+                    ray_address = f"{host_ip}:6379"
+                else:
+                    hostname = socket.gethostname()
+                    host_ip = socket.gethostbyname(hostname)
+                    ray_address = f"{host_ip}:6379"
+                ray.init(address=ray_address, ignore_reinit_error=True)
+            except Exception:
+                # Fallback to localhost
+                ray.init(address="localhost:6379", ignore_reinit_error=True)
     
     try:
         serve.start(detached=True)

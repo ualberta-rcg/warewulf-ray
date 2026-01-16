@@ -54,27 +54,54 @@ def connect_to_ray():
                 print("✓ Using existing Ray connection (from systemd service)")
                 return
             
-            # Try to get the Ray address from the running cluster
-            # First try to find the head node address
+            # Get the Ray address from the running cluster
+            # Try to find it from ray status or session directory
+            ray_address = None
+            
+            # Method 1: Try to get from ray status output
             try:
-                # Check if there's a ray cluster info file
                 import subprocess
                 result = subprocess.run(['ray', 'status'], capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
-                    # Parse the output to find the address
-                    # Ray status shows the address in the output
+                    # Look for the address in the output
+                    # Ray status typically shows something like "ray://172.26.92.232:10001"
                     for line in result.stdout.split('\n'):
-                        if 'ray://' in line or ':' in line:
-                            # Try to extract address
-                            pass
+                        if 'ray://' in line:
+                            # Extract address from ray:// format
+                            import re
+                            match = re.search(r'ray://([^:]+):(\d+)', line)
+                            if match:
+                                host = match.group(1)
+                                port = match.group(2)
+                                ray_address = f"{host}:{port}"
+                                break
             except Exception:
                 pass
             
-            # Try to connect to local Ray (should be running via systemd)
-            # Don't use 'auto' - it doesn't work reliably
-            # Instead, try connecting without address (uses default local connection)
-            ray.init(ignore_reinit_error=True)
-            print("✓ Connected to local Ray")
+            # Method 2: Get head node IP from system (for head node)
+            if not ray_address:
+                try:
+                    import socket
+                    import subprocess
+                    # Get the primary IP address
+                    # Try hostname -I first (more reliable)
+                    result = subprocess.run(['hostname', '-I'], capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0 and result.stdout.strip():
+                        host_ip = result.stdout.strip().split()[0]
+                        ray_address = f"{host_ip}:6379"
+                    else:
+                        # Fallback to gethostbyname
+                        hostname = socket.gethostname()
+                        host_ip = socket.gethostbyname(hostname)
+                        ray_address = f"{host_ip}:6379"
+                except Exception:
+                    # Method 3: Use localhost with default port as last resort
+                    ray_address = "localhost:6379"
+            
+            # Now connect to the existing cluster
+            print(f"📡 Connecting to existing Ray cluster at {ray_address}...")
+            ray.init(address=ray_address, ignore_reinit_error=True)
+            print(f"✓ Connected to Ray cluster at {ray_address}")
         except Exception as e:
             print(f"⚠ Could not connect to Ray: {e}")
             print("  Ray should be running via systemd service")
