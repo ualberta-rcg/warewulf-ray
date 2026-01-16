@@ -25,6 +25,11 @@ try:
     VLLM_AVAILABLE = True
 except ImportError:
     VLLM_AVAILABLE = False
+    LLM = None
+    # Define a dummy class for type hints when vLLM is not available
+    class SamplingParams:
+        def __init__(self, *args, **kwargs):
+            pass
     print("⚠️  vLLM not available. Install with: pip install vllm>=0.10.1")
 
 
@@ -53,6 +58,9 @@ class HuggingFaceLLMEndpoint:
         """Initialize vLLM engine with HuggingFace model"""
         if not VLLM_AVAILABLE:
             raise ImportError("vLLM not available. Install with: pip install vllm>=0.10.1")
+        
+        # Store SamplingParams class for later use
+        self.SamplingParams = SamplingParams
         
         self.model_name = model_name
         self.hf_token = hf_token or os.environ.get("HF_TOKEN", "")
@@ -140,7 +148,7 @@ class HuggingFaceLLMEndpoint:
             prompt = self._messages_to_prompt(messages)
             
             # Create sampling params
-            sampling_params = SamplingParams(
+            sampling_params = self.SamplingParams(
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
@@ -200,7 +208,7 @@ class HuggingFaceLLMEndpoint:
         prompt_parts.append("Assistant:")
         return "\n".join(prompt_parts)
     
-    async def _generate_stream(self, prompt: str, sampling_params: SamplingParams):
+    async def _generate_stream(self, prompt: str, sampling_params):
         """Generate streaming response"""
         # For streaming, we need to use async engine
         # This is a simplified version - for production, use AsyncLLMEngine
