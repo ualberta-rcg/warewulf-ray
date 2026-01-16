@@ -192,12 +192,86 @@ def deploy_all_endpoints():
             
             # Wrap FastAPI app in a Ray Serve deployment class
             # Create endpoint and app INSIDE __init__ to avoid serialization issues
+            # Add runtime_env to ensure dependencies and paths are available on workers
+            import os
+            from pathlib import Path
+            
+            # Get the ray-endpoints directory path
+            ray_endpoints_dir = Path(__file__).parent.absolute()
+            
+            # Support Compute Canada modules if available
+            # Check if module command is available and load common modules
+            compute_canada_modules = []
+            if os.path.exists("/cvmfs/soft.computecanada.ca/config/profile/bash.sh"):
+                # Compute Canada modules available
+                # You can add module loading here if needed
+                # For example: compute_canada_modules = ["python/3.12", "cuda/12.0"]
+                pass
+            
+            # Setup runtime environment for workers
+            # This ensures the base module and dependencies are available on worker nodes
+            
+            # Check for shared venv on NFS (more efficient than installing on each worker)
+            shared_venv_path = "/data/ray-endpoints-venv"
+            use_shared_venv = os.path.exists(shared_venv_path) and os.path.exists(f"{shared_venv_path}/bin/python")
+            
+            # Build PATH with shared venv if available
+            path_components = [os.environ.get("PATH", "")]
+            if use_shared_venv:
+                path_components.insert(0, f"{shared_venv_path}/bin")
+            
+            runtime_env = {
+                "env_vars": {
+                    "PYTHONPATH": str(ray_endpoints_dir),
+                    "PATH": ":".join(path_components),
+                },
+                # Add pip packages if needed (uncomment and add packages)
+                # Note: If using shared venv, install packages there instead:
+                # /data/ray-endpoints-venv/bin/pip install package_name
+                # "pip": ["psutil", "requests"],  # Only use if NOT using shared venv
+            }
+            
+            # Store modules list and venv info for use in __init__
+            modules_to_load = compute_canada_modules
+            shared_venv_available = use_shared_venv
+            
             @serve.deployment(
                 name=endpoint_class.DEPLOYMENT_NAME,
                 autoscaling_config=autoscaling_config,
+                runtime_env=runtime_env,
             )
             class FastAPIDeployment:
                 def __init__(self):
+                    # Ensure Python path is set for imports (critical for worker nodes)
+                    import sys
+                    ray_endpoints_dir = Path(__file__).parent.parent.absolute()
+                    if str(ray_endpoints_dir) not in sys.path:
+                        sys.path.insert(0, str(ray_endpoints_dir))
+                    
+                    # Activate shared venv if available (NFS share)
+                    if shared_venv_available:
+                        try:
+                            shared_venv_path = "/data/ray-endpoints-venv"
+                            # Add venv to sys.path
+                            venv_site_packages = f"{shared_venv_path}/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages"
+                            if os.path.exists(venv_site_packages) and venv_site_packages not in sys.path:
+                                sys.path.insert(0, venv_site_packages)
+                            print(f"✓ Using shared venv from NFS: {shared_venv_path}")
+                        except Exception as e:
+                            print(f"⚠ Could not use shared venv: {e}")
+                    
+                    # Load Compute Canada modules if available
+                    if modules_to_load:
+                        try:
+                            import subprocess
+                            # Source the module system and load modules
+                            module_cmd = "source /cvmfs/soft.computecanada.ca/config/profile/bash.sh && " + \
+                                       " && ".join([f"module load {m}" for m in modules_to_load])
+                            subprocess.run(["bash", "-c", module_cmd], check=True)
+                            print(f"✓ Loaded Compute Canada modules: {modules_to_load}")
+                        except Exception as e:
+                            print(f"⚠ Could not load Compute Canada modules: {e}")
+                    
                     # Create endpoint instance and app here (on worker side)
                     # This avoids serialization issues with FastAPI's thread locks
                     self.endpoint = endpoint_class()
@@ -275,12 +349,51 @@ def deploy_single_endpoint(endpoint_file: str):
     temp_instance = endpoint_class()
     autoscaling_config = temp_instance.get_autoscaling_config()
     
+    # Setup runtime environment for workers
+    import os
+    from pathlib import Path
+    
+    # Get the ray-endpoints directory path
+    ray_endpoints_dir = Path(__file__).parent.absolute()
+    
+    # Setup runtime environment for workers
+    runtime_env = {
+        "env_vars": {
+            "PYTHONPATH": str(ray_endpoints_dir),
+            "PATH": os.environ.get("PATH", ""),
+        },
+        # Add pip packages if needed (uncomment and add packages)
+        # "pip": ["psutil", "requests"],  # Add any missing packages here
+    }
+    
+    # Support Compute Canada modules if available
+    compute_canada_modules = []
+    if os.path.exists("/cvmfs/soft.computecanada.ca/config/profile/bash.sh"):
+        # Compute Canada modules available - add modules here if needed
+        pass
+    
     @serve.deployment(
         name=endpoint_class.DEPLOYMENT_NAME,
         autoscaling_config=autoscaling_config,
+        runtime_env=runtime_env,
     )
     class FastAPIDeployment:
         def __init__(self):
+            # Ensure Python path is set for imports (critical for worker nodes)
+            import sys
+            ray_endpoints_dir = Path(__file__).parent.parent.absolute()
+            if str(ray_endpoints_dir) not in sys.path:
+                sys.path.insert(0, str(ray_endpoints_dir))
+            
+            # Load Compute Canada modules if available
+            if compute_canada_modules:
+                try:
+                    import subprocess
+                    for module in compute_canada_modules:
+                        subprocess.run(["module", "load", module], check=True, shell=True)
+                except Exception as e:
+                    print(f"⚠ Could not load Compute Canada modules: {e}")
+            
             # Create endpoint instance and app here (on worker side)
             # This avoids serialization issues with FastAPI's thread locks
             self.endpoint = endpoint_class()
