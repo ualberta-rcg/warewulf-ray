@@ -49,7 +49,7 @@ def deploy_gpt_oss(model_name: str = "openai-community/gpt-oss-20b"):
     )
     
     print(f"✅ GPT-OSS endpoint deployed successfully!")
-    print(f"   OpenAI API: http://<head-node-ip>:8001/v1")
+    print(f"   OpenAI API: http://<head-node-ip>:8000/v1")
     print(f"   Model name: my-gpt-oss")
 
 
@@ -91,18 +91,25 @@ def main():
         print("   (Note: This requires disk space - check with: df -h)")
     
     # Start Ray Serve with HTTP options
-    RAY_SERVE_PORT = 8001  # Use 8001 to avoid conflict with Triton on 8000
+    RAY_SERVE_PORT = 8000  # Use 8000 (user prefers this port)
     try:
         # Check if Serve is already running
         try:
             status = serve.status()
             print(f"✅ Ray Serve is already running")
             print(f"   Current applications: {len(status.applications) if hasattr(status, 'applications') else 'N/A'}")
+            # Restart Serve to ensure it's listening on 0.0.0.0
+            print(f"🔄 Restarting Ray Serve to ensure it's listening on 0.0.0.0:{RAY_SERVE_PORT}...")
+            serve.shutdown()
+            import time
+            time.sleep(1)  # Give it time to shutdown
         except:
-            # Serve not running, start it
-            http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
-            serve.start(detached=True, http_options=http_options)
-            print(f"✅ Ray Serve started on 0.0.0.0:{RAY_SERVE_PORT}")
+            pass  # Serve not running, will start below
+        
+        # Start Serve with correct options
+        http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
+        serve.start(detached=True, http_options=http_options)
+        print(f"✅ Ray Serve started on 0.0.0.0:{RAY_SERVE_PORT}")
     except Exception as e:
         print(f"⚠️  Ray Serve setup issue: {e}")
         print(f"   Continuing anyway...")
