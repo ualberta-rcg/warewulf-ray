@@ -105,6 +105,10 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             if vllm_llm is None or vllm_sampling_params is None:
                 raise ImportError("vLLM is not available. Installation may have failed.")
             
+            # Store vLLM classes as instance variables
+            self.vllm_llm_class = vllm_llm
+            self.vllm_sampling_params_class = vllm_sampling_params
+            
             self.model_name = model_name
             self.hf_token = hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
             print(f"🚀 Loading model: {model_name}")
@@ -133,8 +137,8 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                 if self.hf_token:
                     llm_kwargs["token"] = self.hf_token
                 
-                # Use the locally imported LLM class
-                self.llm = vllm_llm(**llm_kwargs)
+                # Use the stored LLM class
+                self.llm = self.vllm_llm_class(**llm_kwargs)
                 print(f"✅ Model loaded: {model_name}")
             except Exception as e:
                 print(f"❌ Failed to load model: {e}")
@@ -192,7 +196,7 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                 prompt = self._messages_to_prompt(messages)
                 
                 # Create sampling params
-                sampling_params = SamplingParams(
+                sampling_params = self.vllm_sampling_params_class(
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )

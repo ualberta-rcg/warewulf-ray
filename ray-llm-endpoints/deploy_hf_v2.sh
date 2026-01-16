@@ -76,8 +76,10 @@ if [ "$DEPLOY_BOTH" = "true" ]; then
     echo "📊 Endpoints:"
     APP1="hf-$(echo $MODEL1 | sed 's/\//-/g' | sed 's/_/-/g')"
     APP2="hf-$(echo $MODEL2 | sed 's/\//-/g' | sed 's/_/-/g')"
-    echo "   DeepSeek-7B: http://<head-node-ip>:8000/${APP1}/v1"
-    echo "   Mistral-7B:   http://<head-node-ip>:8000/${APP2}/v1"
+    # Get actual head node IP
+    HEAD_IP=$("$RAY_PYTHON" -c "import ray; ray.init(address='auto', ignore_reinit_error=True); print(ray.util.get_node_ip_address())" 2>/dev/null || echo "172.26.92.232")
+    echo "   DeepSeek-7B: http://${HEAD_IP}:8000/${APP1}/v1"
+    echo "   Mistral-7B:   http://${HEAD_IP}:8000/${APP2}/v1"
     echo ""
     echo "💡 Features:"
     echo "   - Separate applications (no overwriting)"
