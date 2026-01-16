@@ -47,6 +47,7 @@ except ImportError:
             ],
             "env_vars": {
                 "HF_TOKEN": os.environ.get("HF_TOKEN", ""),  # Pass HF token via env
+                "VLLM_USE_MODELSCOPE": "False",
             }
         }
     }
@@ -56,11 +57,51 @@ class HuggingFaceLLMEndpoint:
     
     def __init__(self, model_name: str = "deepseek-ai/deepseek-llm-7b-chat", hf_token: str = None):
         """Initialize vLLM engine with HuggingFace model"""
+        import sys
+        import subprocess
+        
+        # Check if vLLM is available, if not try to install it
+        vllm_llm = LLM
+        vllm_sampling_params = SamplingParams
+        
         if not VLLM_AVAILABLE:
-            raise ImportError("vLLM not available. Install with: pip install vllm>=0.10.1")
+            print("⚠️  vLLM not available. Attempting to install...")
+            try:
+                # Try to install vllm using the Ray Python
+                ray_python = "/opt/ray/bin/python"
+                if os.path.exists(ray_python):
+                    print("   Installing vllm and dependencies (this may take a few minutes)...")
+                    result = subprocess.run(
+                        [
+                            ray_python, "-m", "pip", "install", "--upgrade", 
+                            "vllm>=0.10.1", "transformers>=4.30.0", "torch>=2.0.0"
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=600  # 10 minute timeout
+                    )
+                    if result.returncode != 0:
+                        print(f"   pip install stderr: {result.stderr}")
+                        raise RuntimeError(f"pip install failed: {result.stderr}")
+                    
+                    # Reload vllm module
+                    import importlib
+                    if 'vllm' in sys.modules:
+                        del sys.modules['vllm']
+                    from vllm import LLM, SamplingParams
+                    vllm_llm = LLM
+                    vllm_sampling_params = SamplingParams
+                    print("✅ vLLM installed successfully")
+                else:
+                    raise ImportError("vLLM not available and cannot install (Ray Python not found)")
+            except subprocess.TimeoutExpired:
+                raise ImportError("vLLM installation timed out. Install manually with: /opt/ray/bin/pip install vllm>=0.10.1")
+            except Exception as e:
+                print(f"❌ Failed to install vLLM: {e}")
+                raise ImportError(f"vLLM not available and installation failed: {e}. Install with: /opt/ray/bin/pip install vllm>=0.10.1")
         
         # Store SamplingParams class for later use
-        self.SamplingParams = SamplingParams
+        self.SamplingParams = vllm_sampling_params
         
         self.model_name = model_name
         self.hf_token = hf_token or os.environ.get("HF_TOKEN", "")
@@ -88,10 +129,13 @@ class HuggingFaceLLMEndpoint:
             if self.hf_token:
                 llm_kwargs["token"] = self.hf_token
             
-            self.llm = LLM(**llm_kwargs)
+            # Use the locally imported LLM class
+            self.llm = vllm_llm(**llm_kwargs)
             print(f"✅ Model loaded: {model_name}")
         except Exception as e:
             print(f"❌ Failed to load model: {e}")
+            import traceback
+            traceback.print_exc()
             print(f"   Make sure you have:")
             print(f"   1. Sufficient disk space (check: df -h)")
             print(f"   2. Network access to huggingface.co")

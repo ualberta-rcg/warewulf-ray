@@ -37,9 +37,10 @@ except ImportError:
             "pip": [
                 "vllm>=0.10.1",
                 "openai>=1.0.0",
-                # Try to install ray[serve-llm] on workers if needed
-                # This will be installed per-worker, not on head node
-            ]
+            ],
+            "env_vars": {
+                "VLLM_USE_MODELSCOPE": "False",
+            }
         }
     }
 )
@@ -48,21 +49,63 @@ class GPTOSSEndpoint:
     
     def __init__(self, model_name: str = "openai-community/gpt-oss-20b"):
         """Initialize vLLM engine"""
+        import sys
+        import subprocess
+        
+        # Check if vLLM is available, if not try to install it
+        vllm_llm = LLM
+        vllm_sampling_params = SamplingParams
+        
         if not VLLM_AVAILABLE:
-            raise ImportError("vLLM not available. Install with: pip install vllm>=0.10.1")
+            print("⚠️  vLLM not available. Attempting to install...")
+            try:
+                # Try to install vllm using the Ray Python
+                ray_python = "/opt/ray/bin/python"
+                if os.path.exists(ray_python):
+                    print("   Installing vllm (this may take a few minutes)...")
+                    result = subprocess.run(
+                        [ray_python, "-m", "pip", "install", "--upgrade", "vllm>=0.10.1"],
+                        capture_output=True,
+                        text=True,
+                        timeout=600  # 10 minute timeout
+                    )
+                    if result.returncode != 0:
+                        print(f"   pip install stderr: {result.stderr}")
+                        raise RuntimeError(f"pip install failed: {result.stderr}")
+                    
+                    # Reload vllm module
+                    import importlib
+                    if 'vllm' in sys.modules:
+                        del sys.modules['vllm']
+                    from vllm import LLM, SamplingParams
+                    vllm_llm = LLM
+                    vllm_sampling_params = SamplingParams
+                    print("✅ vLLM installed successfully")
+                else:
+                    raise ImportError("vLLM not available and cannot install (Ray Python not found)")
+            except subprocess.TimeoutExpired:
+                raise ImportError("vLLM installation timed out. Install manually with: /opt/ray/bin/pip install vllm>=0.10.1")
+            except Exception as e:
+                print(f"❌ Failed to install vLLM: {e}")
+                raise ImportError(f"vLLM not available and installation failed: {e}. Install with: /opt/ray/bin/pip install vllm>=0.10.1")
         
         self.model_name = model_name
         print(f"🚀 Loading model: {model_name}")
         
         # Initialize vLLM engine
         # Note: This loads the model synchronously - for production, consider async loading
-        self.llm = LLM(
-            model=model_name,
-            tensor_parallel_size=1,  # Adjust for multi-GPU
-            max_model_len=32768,  # Adjust based on GPU memory
-        )
-        
-        print(f"✅ Model loaded: {model_name}")
+        try:
+            self.llm = vllm_llm(
+                model=model_name,
+                tensor_parallel_size=1,  # Adjust for multi-GPU
+                max_model_len=32768,  # Adjust based on GPU memory
+            )
+            print(f"✅ Model loaded: {model_name}")
+        except Exception as e:
+            print(f"❌ Failed to load model: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     async def __call__(self, request: Request) -> Any:
         """Handle OpenAI-compatible API requests"""
