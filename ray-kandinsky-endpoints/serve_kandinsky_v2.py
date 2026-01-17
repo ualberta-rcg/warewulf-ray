@@ -124,14 +124,14 @@ def create_deployment(model_name: str, model_path: str):
                                 del sys.modules[mod]
                         import torch
                         from diffusers import KandinskyV22Pipeline
-                        # Update global availability flags
-                        global KANDINSKY_V22_AVAILABLE, KANDINSKY_V3_DIFFUSERS_AVAILABLE, KANDINSKY_V3_CUSTOM_AVAILABLE, KANDINSKY_V3_AVAILABLE, KANDINSKY_AVAILABLE
-                        KANDINSKY_V22_AVAILABLE = True
+                        
+                        # Re-import to update module-level variables (we can't use global in nested function)
+                        # Instead, we'll check availability dynamically in load_model
                         try:
                             from diffusers import Kandinsky3Pipeline
-                            KANDINSKY_V3_DIFFUSERS_AVAILABLE = True
+                            print("✅ Kandinsky 3 available in diffusers")
                         except ImportError:
-                            KANDINSKY_V3_DIFFUSERS_AVAILABLE = False
+                            print("⚠️  Kandinsky 3 not available in diffusers")
                         
                         # Try to install and import custom kandinsky3 package
                         try:
@@ -141,23 +141,17 @@ def create_deployment(model_name: str, model_path: str):
                                 timeout=300
                             )
                             if result2.returncode == 0:
-                                from kandinsky3 import get_T2I_pipeline
-                                KANDINSKY_V3_CUSTOM_AVAILABLE = True
-                                print("✅ Kandinsky 3 custom package installed")
+                                try:
+                                    from kandinsky3 import get_T2I_pipeline
+                                    print("✅ Kandinsky 3 custom package installed")
+                                except ImportError:
+                                    print("⚠️  kandinsky3 package installed but import failed")
                             else:
-                                KANDINSKY_V3_CUSTOM_AVAILABLE = False
                                 print("⚠️  Could not install kandinsky3 custom package")
-                        except:
-                            KANDINSKY_V3_CUSTOM_AVAILABLE = False
-                            print("⚠️  kandinsky3 custom package not available")
+                        except Exception as e:
+                            print(f"⚠️  kandinsky3 custom package installation failed: {e}")
                         
-                        KANDINSKY_V3_AVAILABLE = KANDINSKY_V3_DIFFUSERS_AVAILABLE or KANDINSKY_V3_CUSTOM_AVAILABLE
-                        KANDINSKY_AVAILABLE = True
-                        
-                        if KANDINSKY_V3_AVAILABLE:
-                            print("✅ Kandinsky pipelines installed successfully (V2.2 and V3)")
-                        else:
-                            print("✅ Kandinsky V2.2 installed successfully (V3 not available)")
+                        print("✅ Kandinsky pipelines installed successfully")
                     else:
                         raise ImportError("Kandinsky not available and cannot install")
                 except Exception as e:
@@ -188,7 +182,7 @@ def create_deployment(model_name: str, model_path: str):
                     if model_path and os.path.isdir(model_path):
                         # Load from directory (HuggingFace format)
                         print("   Loading from directory (HuggingFace format)")
-                        if is_v3 and KANDINSKY_V3_AVAILABLE:
+                        if is_v3 and kandinsky_v3_available:
                             print("   Detected Kandinsky V3 - using Kandinsky3Pipeline")
                             try:
                                 self.pipeline = Kandinsky3Pipeline.from_pretrained(
@@ -221,7 +215,7 @@ def create_deployment(model_name: str, model_path: str):
                         is_safetensors = model_path.endswith(".safetensors")
                         
                         # For Kandinsky 3, try custom package first (supports .ckpt files)
-                        if is_v3 and KANDINSKY_V3_CUSTOM_AVAILABLE:
+                        if is_v3 and kandinsky_v3_custom_available:
                             print("   Detected Kandinsky V3 - using custom kandinsky3 package")
                             try:
                                 from kandinsky3 import get_T2I_pipeline
@@ -263,14 +257,18 @@ def create_deployment(model_name: str, model_path: str):
                                 print(f"   ⚠️  Failed to load with custom kandinsky3 package: {error_msg}")
                                 print("   Trying diffusers Kandinsky3Pipeline as fallback...")
                                 # Fall through to try diffusers
-                                if KANDINSKY_V3_DIFFUSERS_AVAILABLE and hasattr(Kandinsky3Pipeline, 'from_single_file'):
+                                if kandinsky_v3_diffusers_available:
                                     try:
-                                        self.pipeline = Kandinsky3Pipeline.from_single_file(
-                                            model_path,
-                                            torch_dtype=torch.float16,
-                                            use_safetensors=is_safetensors
-                                        )
-                                        self.is_v3 = True
+                                        from diffusers import Kandinsky3Pipeline
+                                        if hasattr(Kandinsky3Pipeline, 'from_single_file'):
+                                            self.pipeline = Kandinsky3Pipeline.from_single_file(
+                                                model_path,
+                                                torch_dtype=torch.float16,
+                                                use_safetensors=is_safetensors
+                                            )
+                                            self.is_v3 = True
+                                        else:
+                                            raise RuntimeError("Kandinsky3Pipeline.from_single_file not available")
                                     except Exception as e2:
                                         raise RuntimeError(
                                             f"Failed to load Kandinsky 3 from checkpoint: {model_path}\n"
@@ -285,7 +283,7 @@ def create_deployment(model_name: str, model_path: str):
                                         f"Kandinsky 3 requires the custom 'kandinsky3' package. Install with: pip install kandinsky3"
                                     )
                         # Try diffusers from_single_file for V3 or V2.2
-                        elif is_v3 and KANDINSKY_V3_DIFFUSERS_AVAILABLE:
+                        elif is_v3 and kandinsky_v3_diffusers_available:
                             print("   Detected Kandinsky V3 - trying diffusers Kandinsky3Pipeline")
                             try:
                                 if hasattr(Kandinsky3Pipeline, 'from_single_file'):
@@ -333,7 +331,7 @@ def create_deployment(model_name: str, model_path: str):
                     else:
                         # Try as HuggingFace model ID
                         print(f"   Treating as HuggingFace model ID: {model_path}")
-                        if is_v3 and KANDINSKY_V3_AVAILABLE:
+                        if is_v3 and kandinsky_v3_available:
                             print("   Detected Kandinsky V3 - trying Kandinsky3Pipeline")
                             try:
                                 self.pipeline = Kandinsky3Pipeline.from_pretrained(
