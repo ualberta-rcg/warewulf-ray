@@ -26,7 +26,7 @@ except ImportError:
 
 # Try to import Kandinsky pipelines
 try:
-    from diffusers import KandinskyV22Pipeline, KandinskyV3Pipeline
+    from diffusers import KandinskyV22Pipeline, Kandinsky3Pipeline
     KANDINSKY_AVAILABLE = True
 except ImportError:
     KANDINSKY_AVAILABLE = False
@@ -104,7 +104,7 @@ def create_deployment(model_name: str, model_path: str):
                             if mod in sys.modules:
                                 del sys.modules[mod]
                         import torch
-                        from diffusers import KandinskyV22Pipeline, KandinskyV3Pipeline
+                        from diffusers import KandinskyV22Pipeline, Kandinsky3Pipeline
                         print("✅ Kandinsky pipelines installed successfully")
                     else:
                         raise ImportError("Kandinsky not available and cannot install")
@@ -127,8 +127,8 @@ def create_deployment(model_name: str, model_path: str):
                         # Load from directory (HuggingFace format)
                         print("   Loading from directory (HuggingFace format)")
                         if is_v3:
-                            print("   Detected Kandinsky V3 - using KandinskyV3Pipeline")
-                            self.pipeline = KandinskyV3Pipeline.from_pretrained(
+                            print("   Detected Kandinsky V3 - using Kandinsky3Pipeline")
+                            self.pipeline = Kandinsky3Pipeline.from_pretrained(
                                 model_path,
                                 torch_dtype=torch.float16,
                                 local_files_only=True
@@ -150,15 +150,15 @@ def create_deployment(model_name: str, model_path: str):
                         # Try from_single_file first (if supported)
                         try:
                             if is_v3:
-                                print("   Detected Kandinsky V3 - using KandinskyV3Pipeline")
-                                if hasattr(KandinskyV3Pipeline, 'from_single_file'):
-                                    self.pipeline = KandinskyV3Pipeline.from_single_file(
+                                print("   Detected Kandinsky V3 - using Kandinsky3Pipeline")
+                                if hasattr(Kandinsky3Pipeline, 'from_single_file'):
+                                    self.pipeline = Kandinsky3Pipeline.from_single_file(
                                         model_path,
                                         torch_dtype=torch.float16,
                                         use_safetensors=is_safetensors
                                     )
                                 else:
-                                    raise AttributeError("from_single_file not available for KandinskyV3Pipeline")
+                                    raise AttributeError("from_single_file not available for Kandinsky3Pipeline")
                                 self.is_v3 = True
                             else:
                                 print("   Using KandinskyV22Pipeline (V2.2)")
@@ -190,8 +190,8 @@ def create_deployment(model_name: str, model_path: str):
                         # Try as HuggingFace model ID
                         print(f"   Treating as HuggingFace model ID: {model_path}")
                         if is_v3:
-                            print("   Detected Kandinsky V3 - using KandinskyV3Pipeline")
-                            self.pipeline = KandinskyV3Pipeline.from_pretrained(
+                            print("   Detected Kandinsky V3 - using Kandinsky3Pipeline")
+                            self.pipeline = Kandinsky3Pipeline.from_pretrained(
                                 model_path,
                                 torch_dtype=torch.float16
                             )
