@@ -121,24 +121,88 @@ def create_deployment(model_name: str, model_path: str):
                     # Detect if it's V3 or V2.2 based on filename
                     model_lower = model_path.lower()
                     is_v3 = "kandinsky3" in model_lower or "v3" in model_lower
-                    is_safetensors = model_path.endswith(".safetensors")
                     
-                    if is_v3:
-                        print("   Detected Kandinsky V3 - using KandinskyV3Pipeline")
-                        self.pipeline = KandinskyV3Pipeline.from_single_file(
-                            model_path,
-                            torch_dtype=torch.float16,
-                            use_safetensors=is_safetensors
-                        )
-                        self.is_v3 = True
+                    # Check if path is a directory or a file
+                    if os.path.isdir(model_path):
+                        # Load from directory (HuggingFace format)
+                        print("   Loading from directory (HuggingFace format)")
+                        if is_v3:
+                            print("   Detected Kandinsky V3 - using KandinskyV3Pipeline")
+                            self.pipeline = KandinskyV3Pipeline.from_pretrained(
+                                model_path,
+                                torch_dtype=torch.float16,
+                                local_files_only=True
+                            )
+                            self.is_v3 = True
+                        else:
+                            print("   Using KandinskyV22Pipeline (V2.2)")
+                            self.pipeline = KandinskyV22Pipeline.from_pretrained(
+                                model_path,
+                                torch_dtype=torch.float16,
+                                local_files_only=True
+                            )
+                            self.is_v3 = False
+                    elif os.path.isfile(model_path):
+                        # Try to load from single file (checkpoint)
+                        print("   Loading from single checkpoint file")
+                        is_safetensors = model_path.endswith(".safetensors")
+                        
+                        # Try from_single_file first (if supported)
+                        try:
+                            if is_v3:
+                                print("   Detected Kandinsky V3 - using KandinskyV3Pipeline")
+                                if hasattr(KandinskyV3Pipeline, 'from_single_file'):
+                                    self.pipeline = KandinskyV3Pipeline.from_single_file(
+                                        model_path,
+                                        torch_dtype=torch.float16,
+                                        use_safetensors=is_safetensors
+                                    )
+                                else:
+                                    raise AttributeError("from_single_file not available for KandinskyV3Pipeline")
+                                self.is_v3 = True
+                            else:
+                                print("   Using KandinskyV22Pipeline (V2.2)")
+                                if hasattr(KandinskyV22Pipeline, 'from_single_file'):
+                                    self.pipeline = KandinskyV22Pipeline.from_single_file(
+                                        model_path,
+                                        torch_dtype=torch.float16,
+                                        use_safetensors=is_safetensors
+                                    )
+                                else:
+                                    raise AttributeError("from_single_file not available for KandinskyV22Pipeline")
+                                self.is_v3 = False
+                        except (AttributeError, TypeError, Exception) as e:
+                            # from_single_file not supported or failed
+                            error_msg = str(e)
+                            print(f"   from_single_file failed: {error_msg}")
+                            print("   Kandinsky pipelines may not support loading from single checkpoint files.")
+                            print("   Please use one of the following:")
+                            print("   1. A HuggingFace model directory (with config.json, etc.)")
+                            print("   2. A HuggingFace model ID (e.g., 'ai-forever/kandinsky-2.2-decoder')")
+                            print("   3. Convert the checkpoint to a directory structure")
+                            raise RuntimeError(
+                                f"Failed to load Kandinsky model from checkpoint file: {model_path}\n"
+                                f"Error: {error_msg}\n"
+                                f"Kandinsky pipelines require a HuggingFace model directory or model ID, "
+                                f"not a single checkpoint file. Please convert the checkpoint or use a model directory."
+                            )
                     else:
-                        print("   Using KandinskyV22Pipeline (V2.2)")
-                        self.pipeline = KandinskyV22Pipeline.from_single_file(
-                            model_path,
-                            torch_dtype=torch.float16,
-                            use_safetensors=is_safetensors
-                        )
-                        self.is_v3 = False
+                        # Try as HuggingFace model ID
+                        print(f"   Treating as HuggingFace model ID: {model_path}")
+                        if is_v3:
+                            print("   Detected Kandinsky V3 - using KandinskyV3Pipeline")
+                            self.pipeline = KandinskyV3Pipeline.from_pretrained(
+                                model_path,
+                                torch_dtype=torch.float16
+                            )
+                            self.is_v3 = True
+                        else:
+                            print("   Using KandinskyV22Pipeline (V2.2)")
+                            self.pipeline = KandinskyV22Pipeline.from_pretrained(
+                                model_path,
+                                torch_dtype=torch.float16
+                            )
+                            self.is_v3 = False
                     
                     # Move to GPU
                     self.pipeline = self.pipeline.to("cuda")

@@ -20,17 +20,32 @@ Ray Serve deployment for Kandinsky models with dynamic input discovery and autos
 
 ### Deploy a Model
 
+Kandinsky models can be loaded from:
+1. **HuggingFace model directory** (recommended): A directory containing `config.json` and model files
+2. **HuggingFace model ID**: A model ID like `ai-forever/kandinsky-2.2-decoder`
+3. **Single checkpoint file**: `.ckpt` or `.safetensors` (may not be supported by all Kandinsky pipelines)
+
+**Example - HuggingFace model directory:**
+```bash
+./deploy_kandinsky.sh /data/models/kandinsky/kandinsky-2.2-decoder
+```
+
+**Example - HuggingFace model ID:**
+```bash
+/opt/ray/bin/python deploy_kandinsky_v2.py \
+  --model-path ai-forever/kandinsky-2.2-decoder \
+  --model-name kandinsky-2.2-decoder
+```
+
+**Example - Single checkpoint file (may not work):**
 ```bash
 ./deploy_kandinsky.sh /data/models/stablediffusion/kandinsky3-1.ckpt
 ```
 
-Or using Python directly:
-
-```bash
-/opt/ray/bin/python deploy_kandinsky_v2.py \
-  --model-path /data/models/stablediffusion/kandinsky3-1.ckpt \
-  --model-name kandinsky3-1
-```
+**Note**: If loading from a single checkpoint file fails, you may need to:
+- Convert the checkpoint to a HuggingFace directory structure
+- Use a HuggingFace model ID instead
+- Download the model using `huggingface-cli download` to create a directory
 
 ## API Endpoints
 
