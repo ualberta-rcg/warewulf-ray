@@ -72,7 +72,7 @@ def create_deployment(model_name: str, model_path: str):
                     "huggingface-hub>=0.17.0",  # For downloading from HuggingFace
                     # Additional GraphCast dependencies (from setup.py)
                     "chex>=0.1.0",  # Testing utilities for JAX
-                    "jraph>=0.0.6",  # Graph neural networks for JAX
+                    "jraph",  # Graph neural networks for JAX (use any available version, including dev)
                     "matplotlib>=3.5.0",  # Plotting
                     "pandas>=1.3.0",  # Data manipulation
                     "scipy>=1.7.0",  # Scientific computing
