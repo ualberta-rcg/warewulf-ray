@@ -12,22 +12,34 @@ This directory contains Ray Serve deployment for GraphCast weather forecasting m
 
 ## Quick Start
 
-### Deploy GraphCast Model
+### 1. Setup GraphCast Library (One-time, on head node)
+
+Since `/data` is an NFS mount, clone GraphCast once and all replicas can use it:
 
 ```bash
 cd ray-graphcast-endpoints
 
+# Run the setup script (clones GraphCast to /data/models/graphcast)
+bash setup_graphcast.sh
+
+# Or manually:
+git clone https://github.com/google-deepmind/graphcast.git /data/models/graphcast
+```
+
+### 2. Deploy GraphCast Model
+
+```bash
 # Deploy default GraphCast model (shermansiu/dm_graphcast)
 ./deploy_graphcast.sh
 
 # Or deploy a specific model
 ./deploy_graphcast.sh "shermansiu/dm_graphcast" "my-graphcast-app"
-
-# Note: GraphCast requires special setup from Google DeepMind
-# Official repository: https://github.com/google-deepmind/graphcast
-# Some models may be available on HuggingFace, but full GraphCast requires
-# the graphcast Python package and specific data formats
 ```
+
+**Note**: GraphCast requires:
+- The GraphCast library (cloned to `/data/models/graphcast` via setup script)
+- JAX dependencies (`jax`, `jaxlib`, `dm-haiku`, `dm-tree`) - installed via runtime_env
+- Model checkpoints from HuggingFace (downloaded automatically)
 
 ### Using Python directly
 

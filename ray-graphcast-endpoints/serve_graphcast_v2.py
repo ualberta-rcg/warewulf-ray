@@ -143,12 +143,55 @@ def create_deployment(model_name: str, model_path: str):
                 if not model_loaded:
                     print("   Attempting to use Google's GraphCast library (JAX-based)...")
                     try:
-                        from graphcast import checkpoint
-                        from graphcast import graphcast as gc_module
-                        from huggingface_hub import hf_hub_download, list_repo_files
-                        import jax
+                        # Try importing GraphCast libraries
+                        graphcast_available = False
                         
-                        print("   ✅ GraphCast and JAX libraries available")
+                        # First, try to use GraphCast from NFS mount (if manually cloned)
+                        graphcast_path = os.environ.get("GRAPHCAST_PATH", "/data/models/graphcast")
+                        graphcast_module_path = os.path.join(graphcast_path, "graphcast")
+                        
+                        if os.path.exists(graphcast_module_path):
+                            print(f"   Found GraphCast repository at: {graphcast_path}")
+                            # Add to Python path
+                            import sys
+                            if graphcast_path not in sys.path:
+                                sys.path.insert(0, graphcast_path)
+                                print(f"   Added {graphcast_path} to Python path")
+                        
+                        try:
+                            from graphcast import checkpoint
+                            from graphcast import graphcast as gc_module
+                            graphcast_available = True
+                            print("   ✅ GraphCast library imported")
+                        except ImportError as import_err:
+                            print(f"   ⚠️  GraphCast library not available: {import_err}")
+                            print(f"   💡 Tip: GraphCast can be manually cloned to NFS:")
+                            print(f"      Run: bash ray-graphcast-endpoints/setup_graphcast.sh")
+                            print(f"      Or: git clone https://github.com/google-deepmind/graphcast.git {graphcast_path}")
+                            raise ImportError(
+                                f"GraphCast library not available. "
+                                f"Install it manually to {graphcast_path} or ensure it's in Python path. "
+                                f"Error: {import_err}"
+                            )
+                        
+                        if not graphcast_available:
+                            raise ImportError("GraphCast library not available")
+                        
+                        try:
+                            from huggingface_hub import hf_hub_download, list_repo_files
+                            print("   ✅ HuggingFace Hub available")
+                        except ImportError:
+                            print("   ⚠️  huggingface_hub not available")
+                            raise
+                        
+                        try:
+                            import jax
+                            print(f"   ✅ JAX available (version: {jax.__version__})")
+                        except ImportError:
+                            print("   ⚠️  JAX not available")
+                            raise
+                        
+                        print("   ✅ All GraphCast dependencies available")
                         
                         # GraphCast models on HuggingFace
                         repo_ids_to_try = [
@@ -215,15 +258,29 @@ def create_deployment(model_name: str, model_path: str):
                                 
                             except Exception as e:
                                 error_msg = str(e)
-                                print(f"   ⚠️  Failed with {repo_id}: {error_msg[:150]}")
+                                print(f"   ⚠️  Failed with {repo_id}: {error_msg}")
+                                import traceback
+                                print("   Full traceback:")
+                                traceback.print_exc()
                                 continue
+                        
+                        if not model_loaded:
+                            print("   ⚠️  Could not load from any GraphCast repository")
                                 
                     except ImportError as import_err:
                         print(f"   ⚠️  GraphCast/JAX libraries not available: {import_err}")
-                        print("   Install with: pip install 'jax[cuda12]' jaxlib dm-haiku dm-tree")
-                        print("   And: pip install git+https://github.com/google-deepmind/graphcast.git")
+                        print("   These dependencies are installed via runtime_env but may take time on first deployment")
+                        print("   Required packages:")
+                        print("     - jax[cuda12] or jax (for CPU)")
+                        print("     - jaxlib")
+                        print("     - dm-haiku")
+                        print("     - dm-tree")
+                        print("     - git+https://github.com/google-deepmind/graphcast.git")
+                        import traceback
+                        traceback.print_exc()
                     except Exception as gc_err:
-                        print(f"   ⚠️  GraphCast loading failed: {gc_err}")
+                        error_msg = str(gc_err)
+                        print(f"   ⚠️  GraphCast loading failed: {error_msg}")
                         import traceback
                         traceback.print_exc()
                 
