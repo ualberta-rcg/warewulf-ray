@@ -266,6 +266,9 @@ def create_deployment(model_name: str, model_path: str):
             # Load model in background thread
             def load_model():
                 try:
+                    # Import torch in the function scope to avoid UnboundLocalError
+                    import torch
+                    
                     self.loading_started = True
                     print(f"🚀 Loading Kandinsky model in background: {model_name}")
                     print(f"   Model path: {model_path}")
