@@ -17,11 +17,16 @@ This directory contains Ray Serve deployment for GraphCast weather forecasting m
 ```bash
 cd ray-graphcast-endpoints
 
-# Deploy default GraphCast model (google-deepmind/graphcast)
+# Deploy default GraphCast model (shermansiu/dm_graphcast)
 ./deploy_graphcast.sh
 
 # Or deploy a specific model
-./deploy_graphcast.sh "google-deepmind/graphcast" "my-graphcast-app"
+./deploy_graphcast.sh "shermansiu/dm_graphcast" "my-graphcast-app"
+
+# Note: GraphCast requires special setup from Google DeepMind
+# Official repository: https://github.com/google-deepmind/graphcast
+# Some models may be available on HuggingFace, but full GraphCast requires
+# the graphcast Python package and specific data formats
 ```
 
 ### Using Python directly

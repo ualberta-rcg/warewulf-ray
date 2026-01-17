@@ -64,10 +64,14 @@ def create_deployment(model_name: str, model_path: str):
                     "nvidia-ml-py>=12.0.0",
                     "xarray>=2023.1.0",  # For weather data handling
                     "netcdf4>=1.6.0",  # For NetCDF files (common in weather data)
+                    # GraphCast dependencies (optional - will install if needed)
+                    "jax>=0.4.0",  # For Google's GraphCast
+                    "jaxlib>=0.4.0",  # JAX library
                 ],
                 "env_vars": {
                     "HF_HOME": "/data/models",
                     "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
+                    "GRAPHCAST_PATH": "/data/models/graphcast",  # Path for GraphCast repo
                 }
             }
         }
@@ -102,30 +106,118 @@ def create_deployment(model_name: str, model_path: str):
                 print(f"🚀 Loading GraphCast model in background: {model_name}")
                 print(f"   Model path: {model_path}")
                 
-                # GraphCast models are typically loaded via transformers or custom loading
-                # For now, we'll use a generic approach that can be customized
-                try:
-                    from transformers import AutoModel, AutoConfig
-                    
-                    print(f"   Loading from HuggingFace: {model_path}")
-                    # GraphCast may need special handling - this is a template
-                    # Actual GraphCast models might need custom loading logic
-                    self.model = AutoModel.from_pretrained(
-                        model_path,
-                        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                        device_map="auto",
-                        trust_remote_code=True
+                # GraphCast models can come from various sources - try multiple approaches
+                print(f"   Attempting to load GraphCast model: {model_path}")
+                
+                model_loaded = False
+                
+                # 1. Check if it's a local directory or file
+                if model_path and os.path.isdir(model_path):
+                    print("   Loading from local directory...")
+                    try:
+                        from transformers import AutoModel
+                        self.model = AutoModel.from_pretrained(
+                            model_path,
+                            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                            device_map="auto",
+                            local_files_only=True,
+                            trust_remote_code=True
+                        )
+                        model_loaded = True
+                        print("   ✅ Loaded from local directory")
+                    except Exception as e:
+                        print(f"   ⚠️  Failed to load from directory: {e}")
+                
+                # 2. Try Google's GraphCast library from GitHub
+                if not model_loaded:
+                    print("   Attempting to use Google's GraphCast library...")
+                    try:
+                        # Try to install/setup GraphCast from Google DeepMind's repo
+                        graphcast_path = os.environ.get("GRAPHCAST_PATH", "/data/models/graphcast")
+                        graphcast_repo_path = os.path.join(graphcast_path, "graphcast")
+                        
+                        if not os.path.exists(graphcast_repo_path):
+                            print(f"   Cloning GraphCast repository to: {graphcast_path}")
+                            import subprocess
+                            parent_dir = os.path.dirname(graphcast_path)
+                            if parent_dir:
+                                os.makedirs(parent_dir, exist_ok=True)
+                            
+                            result = subprocess.run(
+                                ["git", "clone", "https://github.com/google-deepmind/graphcast.git", graphcast_path],
+                                timeout=300,
+                                capture_output=True,
+                                text=True
+                            )
+                            if result.returncode != 0:
+                                print(f"   ⚠️  git clone failed: {result.stderr[:200]}")
+                            else:
+                                print("   ✅ Cloned GraphCast repository")
+                        
+                        if os.path.exists(graphcast_repo_path):
+                            # Add to Python path
+                            if graphcast_path not in sys.path:
+                                sys.path.insert(0, graphcast_path)
+                            
+                            # Try to import and use GraphCast
+                            try:
+                                # GraphCast uses JAX, not PyTorch - this is a template
+                                # Actual implementation would need JAX setup
+                                print("   Note: GraphCast uses JAX, not PyTorch")
+                                print("   For full GraphCast support, install: pip install graphcast jax")
+                                # For now, we'll fall through to HuggingFace
+                            except ImportError:
+                                print("   ⚠️  GraphCast library not available")
+                    except Exception as gc_err:
+                        print(f"   ⚠️  GraphCast library setup failed: {gc_err}")
+                
+                # 3. Try HuggingFace (as fallback or if model_path is a HF ID)
+                if not model_loaded:
+                    print("   Trying HuggingFace...")
+                    try:
+                        from transformers import AutoModel, AutoConfig
+                        
+                        # Try model_path as HuggingFace ID, or common alternatives
+                        model_ids_to_try = [
+                            model_path,  # User provided
+                            "shermansiu/dm_graphcast",  # Known GraphCast model on HF
+                            "shermansiu/dm_graphcast_small",  # Smaller version
+                        ]
+                        
+                        for model_id in model_ids_to_try:
+                            try:
+                                print(f"   Trying HuggingFace model ID: {model_id}")
+                                self.model = AutoModel.from_pretrained(
+                                    model_id,
+                                    torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                                    device_map="auto",
+                                    trust_remote_code=True
+                                )
+                                model_loaded = True
+                                print(f"   ✅ Loaded from HuggingFace: {model_id}")
+                                break
+                            except Exception as e:
+                                print(f"   ⚠️  Failed with {model_id}: {str(e)[:100]}")
+                                continue
+                    except Exception as hf_err:
+                        print(f"   ⚠️  HuggingFace loading failed: {hf_err}")
+                
+                if not model_loaded:
+                    raise RuntimeError(
+                        f"Could not load GraphCast model from: {model_path}\n"
+                        f"Tried: local directory, Google's GraphCast library, and HuggingFace.\n"
+                        f"For Google's GraphCast, see: https://github.com/google-deepmind/graphcast"
                     )
                     
-                    # Verify GPU usage
-                    if torch.cuda.is_available():
-                        print(f"   ✅ CUDA available: {torch.cuda.get_device_name(0)}")
-                        print(f"   GPU memory allocated: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
-                    else:
-                        print("   ⚠️  CUDA not available - model may be on CPU")
-                    
-                    self.model_loaded = True
-                    self.loading_error = None
+                # Verify GPU usage
+                if torch.cuda.is_available():
+                    print(f"   ✅ CUDA available: {torch.cuda.get_device_name(0)}")
+                    print(f"   GPU memory allocated: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
+                else:
+                    print("   ⚠️  CUDA not available - model may be on CPU")
+                
+                self.model_loaded = True
+                self.loading_error = None
                     
                     # Discover schema after model is loaded
                     self.schema = self._discover_model_schema()

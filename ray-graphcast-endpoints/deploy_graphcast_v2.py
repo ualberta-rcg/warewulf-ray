@@ -96,8 +96,8 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="google-deepmind/graphcast",
-        help="Model name or HuggingFace model ID (default: google-deepmind/graphcast)"
+        default="shermansiu/dm_graphcast",
+        help="Model name or HuggingFace model ID (default: shermansiu/dm_graphcast). Note: GraphCast requires special setup - see README"
     )
     parser.add_argument(
         "--model-path",
