@@ -269,11 +269,25 @@ def create_deployment(model_name: str, model_path: str):
                                 self.model_config = ckpt.model_config
                                 self.task_config = ckpt.task_config
                                 
-                                # Create the GraphCast model
-                                self.model = gc_module.GraphCast(
-                                    model_config=self.model_config,
-                                    task_config=self.task_config
-                                )
+                                # GraphCast uses Haiku, which requires models to be used within hk.transform
+                                # We'll create a function that uses GraphCast and transform it
+                                import haiku as hk
+                                
+                                def graphcast_fn(inputs, targets_template, forcings):
+                                    """GraphCast forward function for Haiku transform"""
+                                    model = gc_module.GraphCast(
+                                        model_config=self.model_config,
+                                        task_config=self.task_config
+                                    )
+                                    return model(inputs, targets_template, forcings)
+                                
+                                # Transform the function
+                                self.graphcast_transform = hk.transform(graphcast_fn)
+                                
+                                # Store the model config for later use
+                                # The actual model will be created within the transform when called
+                                self.model = None  # Will be created on-demand within transform
+                                self.graphcast_model_class = gc_module.GraphCast
                                 
                                 # For GPU inference, we may need to override attention config
                                 # (splash_attention is TPU-only, GPU needs triblockdiag_mha)
@@ -541,7 +555,14 @@ def create_deployment(model_name: str, model_path: str):
         
         async def handle_schema(self, request: Request) -> JSONResponse:
             """Return the model's input schema (discovered dynamically)"""
-            if not hasattr(self, 'model') or self.model is None:
+            # For GraphCast, check if transform is available instead of model
+            model_available = False
+            if self.is_graphcast:
+                model_available = hasattr(self, 'graphcast_transform') and self.graphcast_transform is not None
+            else:
+                model_available = hasattr(self, 'model') and self.model is not None
+            
+            if not model_available:
                 response = {
                     "error": "Model not loaded yet",
                     "status": "scaling_up"
