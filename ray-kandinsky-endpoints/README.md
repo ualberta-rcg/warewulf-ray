@@ -5,10 +5,13 @@ Ray Serve deployment for Kandinsky models with dynamic input discovery and autos
 ## Features
 
 - **Dynamic Input Discovery**: Automatically discovers what inputs each model accepts
-- **Schema Endpoint**: Query `/schema` to see what parameters a model supports
+- **Schema Endpoint**: Query `/schema` to see what parameters a model supports (includes loading errors if model fails to load)
 - **Autoscaling**: Scale to zero when idle, scale up on demand
 - **Compute Metrics**: Detailed resource usage in every response
 - **Polling Support**: Returns 202 status when scaling up from zero
+- **Error Reporting**: Loading errors are stored and returned via the API
+- **Kandinsky 2.2 Support**: Full support for Kandinsky 2.2 (available in diffusers)
+- **Kandinsky 3 Support**: Attempts to use Kandinsky 3 if available, falls back to 2.2 if not
 
 ## Quick Start
 
@@ -57,7 +60,7 @@ Get the dynamically discovered input schema:
 curl http://<head-node-ip>:8000/kandinsky-<model-name>/v1/schema
 ```
 
-**Response:**
+**Response (when model is loaded):**
 ```json
 {
   "model_id": "kandinsky3-1",
@@ -92,6 +95,23 @@ curl http://<head-node-ip>:8000/kandinsky-<model-name>/v1/schema
     "width": 512,
     "height": 512
   }
+}
+```
+
+**Response (when model is loading):**
+```json
+{
+  "error": "Model not loaded yet",
+  "status": "loading"
+}
+```
+
+**Response (when model loading failed):**
+```json
+{
+  "error": "Model loading failed: <error message>",
+  "status": "failed",
+  "loading_error": "<detailed error message>"
 }
 ```
 

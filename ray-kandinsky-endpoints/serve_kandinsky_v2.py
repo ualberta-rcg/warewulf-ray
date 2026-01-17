@@ -26,11 +26,19 @@ except ImportError:
 
 # Try to import Kandinsky pipelines
 try:
-    from diffusers import KandinskyV22Pipeline, Kandinsky3Pipeline
-    KANDINSKY_AVAILABLE = True
+    from diffusers import KandinskyV22Pipeline
+    KANDINSKY_V22_AVAILABLE = True
 except ImportError:
-    KANDINSKY_AVAILABLE = False
-    print("⚠️  Kandinsky pipelines not available. Install with: pip install diffusers>=0.21.0")
+    KANDINSKY_V22_AVAILABLE = False
+
+# Try to import Kandinsky 3 (may not be available in all diffusers versions)
+try:
+    from diffusers import Kandinsky3Pipeline
+    KANDINSKY_V3_AVAILABLE = True
+except ImportError:
+    KANDINSKY_V3_AVAILABLE = False
+
+KANDINSKY_AVAILABLE = KANDINSKY_V22_AVAILABLE or KANDINSKY_V3_AVAILABLE
 
 
 def create_deployment(model_name: str, model_path: str):
@@ -82,6 +90,8 @@ def create_deployment(model_name: str, model_path: str):
             self.model_path = model_path
             self.is_v3 = False
             self.schema = None  # Will be populated after model loads
+            self.loading_error = None  # Store loading errors for API responses
+            self.loading_started = False  # Track if loading has started
             
             # Check if Kandinsky is available
             if not KANDINSKY_AVAILABLE:
@@ -104,8 +114,18 @@ def create_deployment(model_name: str, model_path: str):
                             if mod in sys.modules:
                                 del sys.modules[mod]
                         import torch
-                        from diffusers import KandinskyV22Pipeline, Kandinsky3Pipeline
-                        print("✅ Kandinsky pipelines installed successfully")
+                        from diffusers import KandinskyV22Pipeline
+                        # Update global availability flags
+                        global KANDINSKY_V22_AVAILABLE, KANDINSKY_V3_AVAILABLE, KANDINSKY_AVAILABLE
+                        KANDINSKY_V22_AVAILABLE = True
+                        try:
+                            from diffusers import Kandinsky3Pipeline
+                            KANDINSKY_V3_AVAILABLE = True
+                            print("✅ Kandinsky pipelines installed successfully (V2.2 and V3)")
+                        except ImportError:
+                            KANDINSKY_V3_AVAILABLE = False
+                            print("✅ Kandinsky V2.2 installed successfully (V3 not available in this diffusers version)")
+                        KANDINSKY_AVAILABLE = True
                     else:
                         raise ImportError("Kandinsky not available and cannot install")
                 except Exception as e:
@@ -115,25 +135,46 @@ def create_deployment(model_name: str, model_path: str):
             # Load model in background thread
             def load_model():
                 try:
+                    self.loading_started = True
                     print(f"🚀 Loading Kandinsky model in background: {model_name}")
                     print(f"   Model path: {model_path}")
+                    print(f"   Path exists: {os.path.exists(model_path) if model_path else 'N/A'}")
+                    if model_path and os.path.exists(model_path):
+                        print(f"   Is directory: {os.path.isdir(model_path)}")
+                        print(f"   Is file: {os.path.isfile(model_path)}")
                     
                     # Detect if it's V3 or V2.2 based on filename
-                    model_lower = model_path.lower()
-                    is_v3 = "kandinsky3" in model_lower or "v3" in model_lower
+                    model_lower = model_path.lower() if model_path else ""
+                    is_v3 = ("kandinsky3" in model_lower or "v3" in model_lower) and KANDINSKY_V3_AVAILABLE
+                    
+                    if is_v3 and not KANDINSKY_V3_AVAILABLE:
+                        print("⚠️  Kandinsky V3 requested but not available in diffusers")
+                        print("   Falling back to Kandinsky V2.2")
+                        is_v3 = False
                     
                     # Check if path is a directory or a file
-                    if os.path.isdir(model_path):
+                    if model_path and os.path.isdir(model_path):
                         # Load from directory (HuggingFace format)
                         print("   Loading from directory (HuggingFace format)")
-                        if is_v3:
+                        if is_v3 and KANDINSKY_V3_AVAILABLE:
                             print("   Detected Kandinsky V3 - using Kandinsky3Pipeline")
-                            self.pipeline = Kandinsky3Pipeline.from_pretrained(
-                                model_path,
-                                torch_dtype=torch.float16,
-                                local_files_only=True
-                            )
-                            self.is_v3 = True
+                            try:
+                                self.pipeline = Kandinsky3Pipeline.from_pretrained(
+                                    model_path,
+                                    torch_dtype=torch.float16,
+                                    local_files_only=True
+                                )
+                                self.is_v3 = True
+                            except Exception as e:
+                                print(f"   ⚠️  Failed to load as Kandinsky V3: {e}")
+                                print("   Falling back to Kandinsky V2.2")
+                                is_v3 = False
+                                self.pipeline = KandinskyV22Pipeline.from_pretrained(
+                                    model_path,
+                                    torch_dtype=torch.float16,
+                                    local_files_only=True
+                                )
+                                self.is_v3 = False
                         else:
                             print("   Using KandinskyV22Pipeline (V2.2)")
                             self.pipeline = KandinskyV22Pipeline.from_pretrained(
@@ -142,24 +183,26 @@ def create_deployment(model_name: str, model_path: str):
                                 local_files_only=True
                             )
                             self.is_v3 = False
-                    elif os.path.isfile(model_path):
+                    elif model_path and os.path.isfile(model_path):
                         # Try to load from single file (checkpoint)
                         print("   Loading from single checkpoint file")
+                        print("   ⚠️  Note: Kandinsky pipelines typically don't support single checkpoint files")
+                        print("   Consider using a HuggingFace model directory or model ID instead")
                         is_safetensors = model_path.endswith(".safetensors")
                         
                         # Try from_single_file first (if supported)
                         try:
-                            if is_v3:
-                                print("   Detected Kandinsky V3 - using Kandinsky3Pipeline")
+                            if is_v3 and KANDINSKY_V3_AVAILABLE:
+                                print("   Detected Kandinsky V3 - trying Kandinsky3Pipeline")
                                 if hasattr(Kandinsky3Pipeline, 'from_single_file'):
                                     self.pipeline = Kandinsky3Pipeline.from_single_file(
                                         model_path,
                                         torch_dtype=torch.float16,
                                         use_safetensors=is_safetensors
                                     )
+                                    self.is_v3 = True
                                 else:
                                     raise AttributeError("from_single_file not available for Kandinsky3Pipeline")
-                                self.is_v3 = True
                             else:
                                 print("   Using KandinskyV22Pipeline (V2.2)")
                                 if hasattr(KandinskyV22Pipeline, 'from_single_file'):
@@ -168,14 +211,14 @@ def create_deployment(model_name: str, model_path: str):
                                         torch_dtype=torch.float16,
                                         use_safetensors=is_safetensors
                                     )
+                                    self.is_v3 = False
                                 else:
                                     raise AttributeError("from_single_file not available for KandinskyV22Pipeline")
-                                self.is_v3 = False
                         except (AttributeError, TypeError, Exception) as e:
                             # from_single_file not supported or failed
                             error_msg = str(e)
-                            print(f"   from_single_file failed: {error_msg}")
-                            print("   Kandinsky pipelines may not support loading from single checkpoint files.")
+                            print(f"   ❌ from_single_file failed: {error_msg}")
+                            print("   Kandinsky pipelines do not support loading from single checkpoint files.")
                             print("   Please use one of the following:")
                             print("   1. A HuggingFace model directory (with config.json, etc.)")
                             print("   2. A HuggingFace model ID (e.g., 'ai-forever/kandinsky-2.2-decoder')")
@@ -189,13 +232,23 @@ def create_deployment(model_name: str, model_path: str):
                     else:
                         # Try as HuggingFace model ID
                         print(f"   Treating as HuggingFace model ID: {model_path}")
-                        if is_v3:
-                            print("   Detected Kandinsky V3 - using Kandinsky3Pipeline")
-                            self.pipeline = Kandinsky3Pipeline.from_pretrained(
-                                model_path,
-                                torch_dtype=torch.float16
-                            )
-                            self.is_v3 = True
+                        if is_v3 and KANDINSKY_V3_AVAILABLE:
+                            print("   Detected Kandinsky V3 - trying Kandinsky3Pipeline")
+                            try:
+                                self.pipeline = Kandinsky3Pipeline.from_pretrained(
+                                    model_path,
+                                    torch_dtype=torch.float16
+                                )
+                                self.is_v3 = True
+                            except Exception as e:
+                                print(f"   ⚠️  Failed to load as Kandinsky V3: {e}")
+                                print("   Falling back to Kandinsky V2.2")
+                                is_v3 = False
+                                self.pipeline = KandinskyV22Pipeline.from_pretrained(
+                                    model_path,
+                                    torch_dtype=torch.float16
+                                )
+                                self.is_v3 = False
                         else:
                             print("   Using KandinskyV22Pipeline (V2.2)")
                             self.pipeline = KandinskyV22Pipeline.from_pretrained(
@@ -215,11 +268,15 @@ def create_deployment(model_name: str, model_path: str):
                     print(f"   Discovered {len(self.schema.get('inputs', {}).get('optional', []))} optional inputs")
                     
                     self.model_loaded = True
+                    self.loading_error = None  # Clear any previous errors
+                    print(f"✅ Model successfully loaded: {model_name}")
                 except Exception as e:
-                    print(f"❌ Failed to load model: {e}")
+                    error_msg = str(e)
+                    print(f"❌ Failed to load model: {error_msg}")
                     import traceback
                     traceback.print_exc()
                     self.model_loaded = False
+                    self.loading_error = error_msg  # Store error for API responses
             
             loading_thread = threading.Thread(target=load_model, daemon=True)
             loading_thread.start()
@@ -345,10 +402,25 @@ def create_deployment(model_name: str, model_path: str):
         async def handle_schema(self, request: Request) -> JSONResponse:
             """Return the model's input schema (discovered dynamically)"""
             if not hasattr(self, 'pipeline') or self.pipeline is None:
-                return JSONResponse({
+                response = {
                     "error": "Model not loaded yet",
                     "status": "scaling_up"
-                }, status_code=503)
+                }
+                
+                # Include loading status
+                if hasattr(self, 'loading_started'):
+                    if self.loading_started:
+                        response["status"] = "loading"
+                    else:
+                        response["status"] = "initializing"
+                
+                # Include error if loading failed
+                if hasattr(self, 'loading_error') and self.loading_error:
+                    response["loading_error"] = self.loading_error
+                    response["error"] = f"Model loading failed: {self.loading_error}"
+                    response["status"] = "failed"
+                
+                return JSONResponse(response, status_code=503)
             
             if self.schema is None:
                 # Try to discover now
