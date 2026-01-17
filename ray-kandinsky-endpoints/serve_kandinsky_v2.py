@@ -102,8 +102,8 @@ def create_deployment(model_name: str, model_path: str):
             self.loading_error = None  # Store loading errors for API responses
             self.loading_started = False  # Track if loading has started
             
-            # Check if Kandinsky is available
-            if not KANDINSKY_AVAILABLE:
+            # Check if Kandinsky is available (at least V2.2)
+            if not KANDINSKY_V22_AVAILABLE:
                 print("⚠️  Kandinsky pipelines not available. Attempting to install...")
                 try:
                     ray_python = "/opt/ray/bin/python"
@@ -214,13 +214,13 @@ def create_deployment(model_name: str, model_path: str):
                         print("   Loading from single checkpoint file")
                         is_safetensors = model_path.endswith(".safetensors")
                         
-                        # For Kandinsky 3, try custom package first (supports .ckpt files)
+                        # For Kandinsky 3, try custom package first
                         if is_v3 and kandinsky_v3_custom_available:
                             print("   Detected Kandinsky V3 - using custom kandinsky3 package")
                             try:
                                 from kandinsky3 import get_T2I_pipeline
                                 
-                                # Set up device and dtype map
+                                # Set up device and dtype map (as per HuggingFace docs)
                                 device_map = torch.device('cuda:0')
                                 dtype_map = {
                                     'unet': torch.float32,
@@ -228,27 +228,19 @@ def create_deployment(model_name: str, model_path: str):
                                     'movq': torch.float32,
                                 }
                                 
-                                # Load pipeline - check if get_T2I_pipeline accepts model_path
-                                print(f"   Loading Kandinsky 3 from checkpoint: {model_path}")
-                                import inspect
-                                sig = inspect.signature(get_T2I_pipeline)
-                                if 'model_path' in sig.parameters:
-                                    # If it accepts model_path, use it
-                                    self.pipeline = get_T2I_pipeline(
-                                        device_map, 
-                                        dtype_map,
-                                        model_path=model_path
-                                    )
-                                else:
-                                    # Otherwise, try setting environment variable or default location
-                                    # The package might look for models in a default location
-                                    print("   Note: get_T2I_pipeline doesn't accept model_path directly")
-                                    print("   Attempting to load with default settings...")
-                                    # Try to set the checkpoint path via environment or config
-                                    # For now, just try loading and see if it works
-                                    self.pipeline = get_T2I_pipeline(device_map, dtype_map)
-                                    # If successful, we might need to load weights separately
-                                    # This is a limitation - the custom package may need the model in a specific format/location
+                                # According to HuggingFace docs, get_T2I_pipeline doesn't accept model_path
+                                # It loads from HuggingFace by default (ai-forever/Kandinsky3.1)
+                                # If user provided a local .ckpt file, we'll use the HuggingFace model
+                                # and note that the local file won't be used directly
+                                if model_path and os.path.isfile(model_path):
+                                    print(f"   Note: Local checkpoint file provided: {model_path}")
+                                    print("   The kandinsky3 package loads from HuggingFace by default")
+                                    print("   Using model: ai-forever/Kandinsky3.1")
+                                    print("   (Local .ckpt files require conversion to HuggingFace format)")
+                                
+                                # Load pipeline from HuggingFace (ai-forever/Kandinsky3.1)
+                                print("   Loading Kandinsky 3 from HuggingFace (ai-forever/Kandinsky3.1)...")
+                                self.pipeline = get_T2I_pipeline(device_map, dtype_map)
                                 
                                 self.is_v3 = True
                                 print("   ✅ Loaded Kandinsky 3 using custom package")
