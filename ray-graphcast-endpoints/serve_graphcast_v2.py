@@ -77,6 +77,10 @@ def create_deployment(model_name: str, model_path: str):
                     "pandas>=1.3.0",  # Data manipulation
                     "scipy>=1.7.0",  # Scientific computing
                     "typing_extensions>=4.0.0",  # Type hints
+                    "trimesh>=3.0.0",  # 3D mesh processing (required by GraphCast)
+                    "rtree>=1.0.0",  # Spatial indexing (required by GraphCast)
+                    "cartopy>=0.21.0",  # Cartographic projections (optional but used by GraphCast)
+                    "dask>=2023.1.0",  # Parallel computing (optional but used by GraphCast)
                     # Note: GraphCast library is loaded from /data/models/graphcast (NFS mount)
                     # Run: bash ray-graphcast-endpoints/setup_graphcast.sh to clone it
                 ],
