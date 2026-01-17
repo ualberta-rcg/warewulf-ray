@@ -218,20 +218,12 @@ def create_deployment(model_name: str, model_path: str):
                 
                 self.model_loaded = True
                 self.loading_error = None
-                    
-                    # Discover schema after model is loaded
-                    self.schema = self._discover_model_schema()
-                    print(f"✅ Model loaded: {model_name}")
-                    print(f"   Discovered {len(self.schema.get('inputs', {}).get('required', []))} required inputs")
-                    print(f"   Discovered {len(self.schema.get('inputs', {}).get('optional', []))} optional inputs")
-                    
-                except Exception as e:
-                    error_msg = str(e)
-                    print(f"❌ Failed to load model: {error_msg}")
-                    import traceback
-                    traceback.print_exc()
-                    self.model_loaded = False
-                    self.loading_error = error_msg
+                
+                # Discover schema after model is loaded
+                self.schema = self._discover_model_schema()
+                print(f"✅ Model loaded: {model_name}")
+                print(f"   Discovered {len(self.schema.get('inputs', {}).get('required', []))} required inputs")
+                print(f"   Discovered {len(self.schema.get('inputs', {}).get('optional', []))} optional inputs")
                     
             except Exception as e:
                 error_msg = str(e)
