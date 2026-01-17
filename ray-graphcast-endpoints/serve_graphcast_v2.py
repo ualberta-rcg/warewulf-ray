@@ -64,9 +64,14 @@ def create_deployment(model_name: str, model_path: str):
                     "nvidia-ml-py>=12.0.0",
                     "xarray>=2023.1.0",  # For weather data handling
                     "netcdf4>=1.6.0",  # For NetCDF files (common in weather data)
-                    # GraphCast dependencies (optional - will install if needed)
-                    "jax>=0.4.0",  # For Google's GraphCast
-                    "jaxlib>=0.4.0",  # JAX library
+                    # GraphCast dependencies (JAX-based)
+                    "jax[cuda12]>=0.4.0",  # JAX with CUDA support (adjust version as needed)
+                    "jaxlib>=0.4.0",
+                    "dm-haiku>=0.0.9",  # DeepMind Haiku (needed by GraphCast)
+                    "dm-tree>=0.1.8",  # DeepMind Tree
+                    "huggingface-hub>=0.17.0",  # For downloading from HuggingFace
+                    # GraphCast package (install from GitHub)
+                    "git+https://github.com/google-deepmind/graphcast.git",  # Official GraphCast library
                 ],
                 "env_vars": {
                     "HF_HOME": "/data/models",
@@ -91,6 +96,12 @@ def create_deployment(model_name: str, model_path: str):
             self.schema = None  # Will be populated after model loads
             self.loading_error = None  # Store loading errors for API responses
             self.loading_started = False  # Track if loading has started
+            # GraphCast-specific attributes
+            self.checkpoint = None
+            self.params = None
+            self.model_config = None
+            self.task_config = None
+            self.is_graphcast = False  # Track if using GraphCast (JAX) vs PyTorch model
             
             # Start loading in background thread (non-blocking)
             loading_thread = threading.Thread(target=self._load_model, daemon=True)
@@ -128,48 +139,93 @@ def create_deployment(model_name: str, model_path: str):
                     except Exception as e:
                         print(f"   ⚠️  Failed to load from directory: {e}")
                 
-                # 2. Try Google's GraphCast library from GitHub
+                # 2. Try Google's GraphCast library (uses JAX, loads from HuggingFace)
                 if not model_loaded:
-                    print("   Attempting to use Google's GraphCast library...")
+                    print("   Attempting to use Google's GraphCast library (JAX-based)...")
                     try:
-                        # Try to install/setup GraphCast from Google DeepMind's repo
-                        graphcast_path = os.environ.get("GRAPHCAST_PATH", "/data/models/graphcast")
-                        graphcast_repo_path = os.path.join(graphcast_path, "graphcast")
+                        from graphcast import checkpoint
+                        from graphcast import graphcast as gc_module
+                        from huggingface_hub import hf_hub_download, list_repo_files
+                        import jax
                         
-                        if not os.path.exists(graphcast_repo_path):
-                            print(f"   Cloning GraphCast repository to: {graphcast_path}")
-                            import subprocess
-                            parent_dir = os.path.dirname(graphcast_path)
-                            if parent_dir:
-                                os.makedirs(parent_dir, exist_ok=True)
-                            
-                            result = subprocess.run(
-                                ["git", "clone", "https://github.com/google-deepmind/graphcast.git", graphcast_path],
-                                timeout=300,
-                                capture_output=True,
-                                text=True
-                            )
-                            if result.returncode != 0:
-                                print(f"   ⚠️  git clone failed: {result.stderr[:200]}")
-                            else:
-                                print("   ✅ Cloned GraphCast repository")
+                        print("   ✅ GraphCast and JAX libraries available")
                         
-                        if os.path.exists(graphcast_repo_path):
-                            # Add to Python path
-                            if graphcast_path not in sys.path:
-                                sys.path.insert(0, graphcast_path)
-                            
-                            # Try to import and use GraphCast
+                        # GraphCast models on HuggingFace
+                        repo_ids_to_try = [
+                            model_path if "/" in model_path and model_path != "google-deepmind/graphcast" else None,  # User provided HF ID (skip invalid)
+                            "shermansiu/dm_graphcast",  # Full resolution
+                            "shermansiu/dm_graphcast_small",  # Smaller version
+                        ]
+                        
+                        # Filter out None values
+                        repo_ids_to_try = [r for r in repo_ids_to_try if r]
+                        
+                        for repo_id in repo_ids_to_try:
                             try:
-                                # GraphCast uses JAX, not PyTorch - this is a template
-                                # Actual implementation would need JAX setup
-                                print("   Note: GraphCast uses JAX, not PyTorch")
-                                print("   For full GraphCast support, install: pip install graphcast jax")
-                                # For now, we'll fall through to HuggingFace
-                            except ImportError:
-                                print("   ⚠️  GraphCast library not available")
+                                print(f"   Trying GraphCast model from HuggingFace: {repo_id}")
+                                
+                                # List available files in the repo
+                                try:
+                                    files = list_repo_files(repo_id=repo_id, repo_type="model")
+                                    
+                                    # Find the .npz checkpoint file
+                                    checkpoint_file = None
+                                    for file in files:
+                                        if file.endswith(".npz") and "GraphCast" in file:
+                                            checkpoint_file = file
+                                            break
+                                except Exception as list_err:
+                                    print(f"   ⚠️  Could not list files: {list_err}")
+                                    # Try common filename patterns
+                                    checkpoint_file = "GraphCast - ERA5 1979-2017 - resolution 0.25 - pressure levels 37 - mesh 2to6 - precipitation input and output.npz"
+                                
+                                if not checkpoint_file:
+                                    # Try common filename patterns
+                                    checkpoint_file = "GraphCast - ERA5 1979-2017 - resolution 0.25 - pressure levels 37 - mesh 2to6 - precipitation input and output.npz"
+                                
+                                print(f"   Downloading checkpoint: {checkpoint_file}")
+                                checkpoint_path = hf_hub_download(
+                                    repo_id=repo_id,
+                                    filename=checkpoint_file,
+                                    cache_dir="/data/models"
+                                )
+                                
+                                # Load the checkpoint
+                                print("   Loading GraphCast checkpoint...")
+                                with open(checkpoint_path, "rb") as f:
+                                    ckpt = checkpoint.load(f, gc_module.CheckPoint)
+                                
+                                # Store checkpoint data
+                                self.checkpoint = ckpt
+                                self.params = ckpt.params
+                                self.model_config = ckpt.model_config
+                                self.task_config = ckpt.task_config
+                                
+                                # Create the GraphCast model
+                                self.model = gc_module.GraphCast(
+                                    model_config=self.model_config,
+                                    task_config=self.task_config
+                                )
+                                
+                                self.is_graphcast = True
+                                model_loaded = True
+                                print(f"   ✅ Loaded GraphCast from HuggingFace: {repo_id}")
+                                print(f"   Model config: resolution={getattr(self.model_config, 'resolution', 'N/A')}")
+                                break
+                                
+                            except Exception as e:
+                                error_msg = str(e)
+                                print(f"   ⚠️  Failed with {repo_id}: {error_msg[:150]}")
+                                continue
+                                
+                    except ImportError as import_err:
+                        print(f"   ⚠️  GraphCast/JAX libraries not available: {import_err}")
+                        print("   Install with: pip install 'jax[cuda12]' jaxlib dm-haiku dm-tree")
+                        print("   And: pip install git+https://github.com/google-deepmind/graphcast.git")
                     except Exception as gc_err:
-                        print(f"   ⚠️  GraphCast library setup failed: {gc_err}")
+                        print(f"   ⚠️  GraphCast loading failed: {gc_err}")
+                        import traceback
+                        traceback.print_exc()
                 
                 # 3. Try HuggingFace (as fallback or if model_path is a HF ID)
                 if not model_loaded:
@@ -197,17 +253,29 @@ def create_deployment(model_name: str, model_path: str):
                                 print(f"   ✅ Loaded from HuggingFace: {model_id}")
                                 break
                             except Exception as e:
-                                print(f"   ⚠️  Failed with {model_id}: {str(e)[:100]}")
+                                error_msg = str(e)
+                                print(f"   ⚠️  Failed with {model_id}: {error_msg[:150]}")
                                 continue
                     except Exception as hf_err:
                         print(f"   ⚠️  HuggingFace loading failed: {hf_err}")
                 
                 if not model_loaded:
-                    raise RuntimeError(
-                        f"Could not load GraphCast model from: {model_path}\n"
-                        f"Tried: local directory, Google's GraphCast library, and HuggingFace.\n"
-                        f"For Google's GraphCast, see: https://github.com/google-deepmind/graphcast"
+                    # Provide helpful error message with alternatives
+                    error_msg = (
+                        f"Could not load weather model from: {model_path}\n"
+                        f"\nTried:\n"
+                        f"  1. Local directory: {model_path if model_path else 'N/A'}\n"
+                        f"  2. Google's GraphCast library (requires JAX setup)\n"
+                        f"  3. HuggingFace model IDs\n"
+                        f"\nNote: 'google-deepmind/graphcast' is not a HuggingFace model.\n"
+                        f"GraphCast from Google DeepMind uses JAX and requires special setup.\n"
+                        f"\nAlternatives:\n"
+                        f"  - Use a local GraphCast model directory\n"
+                        f"  - Try: 'shermansiu/dm_graphcast' (if available on HuggingFace)\n"
+                        f"  - Use a different weather model (FourCastNet, Pangu-Weather, etc.)\n"
+                        f"  - Set up GraphCast manually from: https://github.com/google-deepmind/graphcast"
                     )
+                    raise RuntimeError(error_msg)
                     
                 # Verify GPU usage
                 if torch.cuda.is_available():
@@ -455,12 +523,25 @@ def create_deployment(model_name: str, model_path: str):
                 
                 # Build model inputs from request
                 # GraphCast typically needs atmospheric data, coordinates, etc.
-                # This is a template - actual implementation depends on GraphCast's API
                 model_inputs = self._build_model_inputs(data)
                 
-                # Generate forecast
-                with torch.inference_mode():
-                    result = self.model(**model_inputs)
+                # Generate forecast (different for GraphCast vs PyTorch models)
+                if self.is_graphcast:
+                    # GraphCast uses JAX - different inference pattern
+                    import jax
+                    # GraphCast inference requires specific input format
+                    # This is a template - actual implementation needs proper data preprocessing
+                    print("   ⚠️  GraphCast inference requires proper data preprocessing")
+                    print("   ⚠️  See GraphCast demo notebook for proper input format")
+                    # For now, return a placeholder
+                    result = {
+                        "forecast": "GraphCast inference requires ERA5/HRES data preprocessing",
+                        "note": "See https://github.com/google-deepmind/graphcast for proper usage"
+                    }
+                else:
+                    # PyTorch model inference
+                    with torch.inference_mode():
+                        result = self.model(**model_inputs)
                 
                 query_end_time = time.time()
                 query_duration = query_end_time - query_start_time

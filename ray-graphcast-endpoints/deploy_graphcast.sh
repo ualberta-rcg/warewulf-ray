@@ -6,7 +6,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-MODEL="${1:-google-deepmind/graphcast}"
+MODEL="${1:-shermansiu/dm_graphcast}"
 APP_NAME="${2:-}"
 
 echo "🚀 Deploying GraphCast model: $MODEL"
