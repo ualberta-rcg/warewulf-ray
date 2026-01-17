@@ -149,6 +149,7 @@ def create_deployment(model_name: str, model_path: str):
                 # 2. Try Google's GraphCast library (uses JAX, loads from HuggingFace)
                 if not model_loaded:
                     print("   Attempting to use Google's GraphCast library (JAX-based)...")
+                    graphcast_loading_failed = False
                     try:
                         # Try importing GraphCast libraries
                         graphcast_available = False
@@ -169,34 +170,47 @@ def create_deployment(model_name: str, model_path: str):
                             from graphcast import checkpoint
                             from graphcast import graphcast as gc_module
                             graphcast_available = True
-                            print("   ✅ GraphCast library imported")
+                            print("   ✅ GraphCast library imported successfully")
                         except ImportError as import_err:
-                            print(f"   ⚠️  GraphCast library not available: {import_err}")
-                            print(f"   💡 Tip: GraphCast can be manually cloned to NFS:")
-                            print(f"      Run: bash ray-graphcast-endpoints/setup_graphcast.sh")
-                            print(f"      Or: git clone https://github.com/google-deepmind/graphcast.git {graphcast_path}")
-                            raise ImportError(
-                                f"GraphCast library not available. "
-                                f"Install it manually to {graphcast_path} or ensure it's in Python path. "
-                                f"Error: {import_err}"
-                            )
+                            error_details = str(import_err)
+                            print(f"   ❌ GraphCast library import failed: {error_details}")
+                            import traceback
+                            print("   Import traceback:")
+                            traceback.print_exc()
+                            
+                            # Check if it's a missing dependency
+                            if "No module named" in error_details:
+                                missing_module = error_details.split("'")[1] if "'" in error_details else "unknown"
+                                print(f"   💡 Missing dependency: {missing_module}")
+                                print(f"   Install with: pip install {missing_module}")
+                            
+                            print(f"   💡 Ensure GraphCast is cloned to: {graphcast_path}")
+                            print(f"   Run: bash ray-graphcast-endpoints/setup_graphcast.sh")
+                            # Don't raise - let it fall through to show all errors
+                            graphcast_available = False
                         
                         if not graphcast_available:
-                            raise ImportError("GraphCast library not available")
+                            print("   ⚠️  Skipping GraphCast loading - library not available")
+                            # Don't raise here - continue to try HuggingFace transformers
+                        
+                        if not graphcast_available:
+                            # Skip the rest if GraphCast library isn't available
+                            print("   ⚠️  Cannot proceed with GraphCast loading - library not imported")
+                            raise ImportError("GraphCast library not available - skipping GraphCast loading")
                         
                         try:
                             from huggingface_hub import hf_hub_download, list_repo_files
                             print("   ✅ HuggingFace Hub available")
-                        except ImportError:
-                            print("   ⚠️  huggingface_hub not available")
-                            raise
+                        except ImportError as hf_import_err:
+                            print(f"   ⚠️  huggingface_hub not available: {hf_import_err}")
+                            raise ImportError(f"huggingface_hub not available: {hf_import_err}")
                         
                         try:
                             import jax
                             print(f"   ✅ JAX available (version: {jax.__version__})")
-                        except ImportError:
-                            print("   ⚠️  JAX not available")
-                            raise
+                        except ImportError as jax_import_err:
+                            print(f"   ⚠️  JAX not available: {jax_import_err}")
+                            raise ImportError(f"JAX not available: {jax_import_err}")
                         
                         print("   ✅ All GraphCast dependencies available")
                         
