@@ -286,8 +286,13 @@ def create_deployment(model_name: str, model_path: str):
                                 
                                 # Store the model config for later use
                                 # The actual model will be created within the transform when called
-                                self.model = None  # Will be created on-demand within transform
+                                # Set a placeholder so health checks know the model is loaded
+                                self.model = "GraphCast (Haiku/JAX)"  # Placeholder for health checks
                                 self.graphcast_model_class = gc_module.GraphCast
+                                
+                                # Verify the transform was created successfully
+                                if not hasattr(self, 'graphcast_transform') or self.graphcast_transform is None:
+                                    raise RuntimeError("Failed to create GraphCast transform")
                                 
                                 # For GPU inference, we may need to override attention config
                                 # (splash_attention is TPU-only, GPU needs triblockdiag_mha)
@@ -616,13 +621,25 @@ def create_deployment(model_name: str, model_path: str):
         async def handle_forecast(self, request: Request) -> Any:
             """Handle weather forecasting requests"""
             try:
-                # Check if model is ready
-                model_ready = (
-                    hasattr(self, 'model_loaded') and 
-                    self.model_loaded and 
-                    hasattr(self, 'model') and 
-                    self.model is not None
-                )
+                # Check if model is ready (different for GraphCast vs PyTorch)
+                if hasattr(self, 'is_graphcast') and self.is_graphcast:
+                    # For GraphCast, check if transform and params are available
+                    model_ready = (
+                        hasattr(self, 'model_loaded') and 
+                        self.model_loaded and 
+                        hasattr(self, 'graphcast_transform') and 
+                        self.graphcast_transform is not None and
+                        hasattr(self, 'params') and 
+                        self.params is not None
+                    )
+                else:
+                    # For PyTorch models
+                    model_ready = (
+                        hasattr(self, 'model_loaded') and 
+                        self.model_loaded and 
+                        hasattr(self, 'model') and 
+                        self.model is not None
+                    )
                 
                 if not model_ready:
                     return JSONResponse(
