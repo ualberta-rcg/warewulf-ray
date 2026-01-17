@@ -281,8 +281,8 @@ def create_deployment(model_name: str, model_path: str):
                                     )
                                     return model(inputs, targets_template, forcings)
                                 
-                                # Transform the function
-                                self.graphcast_transform = hk.transform(graphcast_fn)
+                                # Transform the function (use transform_with_state for compatibility)
+                                self.graphcast_transform = hk.transform_with_state(graphcast_fn)
                                 
                                 # Store the model config for later use
                                 # The actual model will be created within the transform when called
@@ -672,17 +672,144 @@ def create_deployment(model_name: str, model_path: str):
                 
                 # Generate forecast (different for GraphCast vs PyTorch models)
                 if self.is_graphcast:
-                    # GraphCast uses JAX - different inference pattern
+                    # GraphCast uses JAX/Haiku - requires transform and proper input format
                     import jax
-                    # GraphCast inference requires specific input format
-                    # This is a template - actual implementation needs proper data preprocessing
-                    print("   ⚠️  GraphCast inference requires proper data preprocessing")
-                    print("   ⚠️  See GraphCast demo notebook for proper input format")
-                    # For now, return a placeholder
-                    result = {
-                        "forecast": "GraphCast inference requires ERA5/HRES data preprocessing",
-                        "note": "See https://github.com/google-deepmind/graphcast for proper usage"
-                    }
+                    import jax.numpy as jnp
+                    import haiku as hk
+                    
+                    try:
+                        # GraphCast requires specific inputs: inputs, targets_template, forcings
+                        # These need to be in the format expected by GraphCast (ERA5/HRES data)
+                        # For now, we'll provide a simplified interface that explains the requirements
+                        
+                        # Check if we have the required data format
+                        if "era5_data" in data or "inputs" in data:
+                            # User provided ERA5 data - use it directly
+                            if "inputs" in data and "targets_template" in data and "forcings" in data:
+                                inputs = jnp.array(data["inputs"])
+                                targets_template = jnp.array(data["targets_template"])
+                                forcings = jnp.array(data["forcings"])
+                            else:
+                                # Need to convert ERA5 data to GraphCast format
+                                # This is complex and requires data preprocessing utilities
+                                raise ValueError(
+                                    "GraphCast requires properly formatted inputs. "
+                                    "Please provide 'inputs', 'targets_template', and 'forcings' arrays, "
+                                    "or use ERA5/HRES data preprocessing. "
+                                    "See https://github.com/google-deepmind/graphcast for details."
+                                )
+                        else:
+                            # User provided simple coordinates - explain what's needed
+                            result = {
+                                "forecast": None,
+                                "message": (
+                                    "GraphCast requires ERA5/HRES atmospheric data, not just coordinates. "
+                                    "To generate a forecast, you need:\n"
+                                    "1. Input atmospheric fields (temperature, pressure, humidity, etc.)\n"
+                                    "2. Target template (structure for output)\n"
+                                    "3. Forcings (solar radiation, etc.)\n\n"
+                                    "These must be in GraphCast's specific format. "
+                                    "See the GraphCast demo notebooks for examples:\n"
+                                    "https://github.com/google-deepmind/graphcast\n\n"
+                                    "For now, you can provide preprocessed data by including:\n"
+                                    "- 'inputs': Atmospheric input fields\n"
+                                    "- 'targets_template': Target structure\n"
+                                    "- 'forcings': Forcing fields"
+                                ),
+                                "model_ready": True,
+                                "requires_era5_data": True,
+                                "user_inputs": {
+                                    "latitude": data.get("latitude"),
+                                    "longitude": data.get("longitude"),
+                                    "forecast_hours": data.get("forecast_hours", 6)
+                                }
+                            }
+                            
+                            # If user provided the required arrays, run inference
+                            if "inputs" in data and "targets_template" in data and "forcings" in data:
+                                # Convert to JAX arrays
+                                inputs = jnp.array(data["inputs"])
+                                targets_template = jnp.array(data["targets_template"])
+                                forcings = jnp.array(data["forcings"])
+                                
+                                # Create RNG key
+                                rng_key = jax.random.PRNGKey(42)
+                                
+                                # Run inference using the transform
+                                # Note: params should already be loaded from checkpoint
+                                if not hasattr(self, 'params') or self.params is None:
+                                    raise RuntimeError("GraphCast parameters not loaded")
+                                
+                                # Initialize state if needed (first time)
+                                # Note: GraphCast may not use state, but transform_with_state requires it
+                                if not hasattr(self, 'graphcast_state'):
+                                    print("   Initializing GraphCast state...")
+                                    try:
+                                        _, self.graphcast_state = self.graphcast_transform.init(
+                                            rng_key, inputs, targets_template, forcings
+                                        )
+                                    except Exception as init_err:
+                                        # If init fails, try without state (some GraphCast versions use transform, not transform_with_state)
+                                        print(f"   ⚠️  State initialization failed, trying without state: {init_err}")
+                                        # Fallback: use transform instead of transform_with_state
+                                        import haiku as hk
+                                        def graphcast_fn_simple(inputs, targets_template, forcings):
+                                            model = gc_module.GraphCast(
+                                                model_config=self.model_config,
+                                                task_config=self.task_config
+                                            )
+                                            return model(inputs, targets_template, forcings)
+                                        self.graphcast_transform = hk.transform(graphcast_fn_simple)
+                                        self.graphcast_state = None
+                                
+                                # Apply the transform for inference
+                                print("   Running GraphCast inference...")
+                                if self.graphcast_state is not None:
+                                    # Use transform_with_state
+                                    outputs, _ = self.graphcast_transform.apply(
+                                        self.params,
+                                        self.graphcast_state,
+                                        rng_key,
+                                        inputs,
+                                        targets_template,
+                                        forcings
+                                    )
+                                else:
+                                    # Use simple transform (no state)
+                                    outputs = self.graphcast_transform.apply(
+                                        self.params,
+                                        rng_key,
+                                        inputs,
+                                        targets_template,
+                                        forcings
+                                    )
+                                
+                                # Convert outputs to numpy for JSON serialization
+                                if hasattr(outputs, 'numpy'):
+                                    outputs_np = outputs.numpy()
+                                else:
+                                    outputs_np = jnp.asarray(outputs)
+                                
+                                result = {
+                                    "forecast": outputs_np.tolist() if outputs_np.size < 1000 else "Forecast generated (too large to display)",
+                                    "forecast_shape": list(outputs_np.shape),
+                                    "forecast_dtype": str(outputs_np.dtype),
+                                    "message": "GraphCast forecast generated successfully"
+                                }
+                            else:
+                                # Return the informative message
+                                pass  # result already set above
+                                
+                    except Exception as inference_err:
+                        error_msg = str(inference_err)
+                        print(f"   ❌ GraphCast inference failed: {error_msg}")
+                        import traceback
+                        traceback.print_exc()
+                        result = {
+                            "forecast": None,
+                            "error": error_msg,
+                            "message": "GraphCast inference failed. Check logs for details."
+                        }
                 else:
                     # PyTorch model inference
                     with torch.inference_mode():
