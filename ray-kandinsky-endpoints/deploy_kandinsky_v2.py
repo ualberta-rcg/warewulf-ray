@@ -154,6 +154,7 @@ def main():
     
     # Ray Serve should already be running on the cluster
     # Just connect and deploy (no need to start/restart Serve)
+    RAY_SERVE_PORT = 8000  # Default Ray Serve port
     
     # Validate model path (if not listing)
     if not args.list_models:

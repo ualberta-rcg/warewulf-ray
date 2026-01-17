@@ -196,9 +196,9 @@ def main():
         print("⚠️  vLLM not found.")
         print("   Note: vLLM will be installed automatically on worker nodes via runtime_env")
     
-    # Start Ray Serve with HTTP options
     # Ray Serve should already be running on the cluster
     # Just connect and deploy (no need to start/restart Serve)
+    RAY_SERVE_PORT = 8000  # Default Ray Serve port
     
     # Deploy the endpoint
     try:
