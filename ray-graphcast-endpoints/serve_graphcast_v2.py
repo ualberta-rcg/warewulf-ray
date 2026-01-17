@@ -366,12 +366,22 @@ def create_deployment(model_name: str, model_path: str):
                         f"  3. HuggingFace model IDs\n"
                         f"\nNote: 'google-deepmind/graphcast' is not a HuggingFace model.\n"
                         f"GraphCast from Google DeepMind uses JAX and requires special setup.\n"
+                        f"\nCheck the logs above for detailed error messages from each loading attempt.\n"
+                        f"Common issues:\n"
+                        f"  - Missing dependencies (check import errors above)\n"
+                        f"  - GraphCast library not found at /data/models/graphcast\n"
+                        f"  - HuggingFace checkpoint download failed\n"
                         f"\nAlternatives:\n"
                         f"  - Use a local GraphCast model directory\n"
                         f"  - Try: 'shermansiu/dm_graphcast' (if available on HuggingFace)\n"
                         f"  - Use a different weather model (FourCastNet, Pangu-Weather, etc.)\n"
                         f"  - Set up GraphCast manually from: https://github.com/google-deepmind/graphcast"
                     )
+                    print("=" * 80)
+                    print("FINAL ERROR SUMMARY:")
+                    print("=" * 80)
+                    print(error_msg)
+                    print("=" * 80)
                     raise RuntimeError(error_msg)
                     
                 # Verify GPU usage
