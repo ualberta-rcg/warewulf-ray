@@ -78,7 +78,7 @@ def create_deployment(model_name: str, model_path: str):
                     "fastapi>=0.100.0",
                     "psutil>=5.9.0",
                     "nvidia-ml-py>=12.0.0",
-                    "kandinsky3"  # Custom Kandinsky 3 package
+                    "git+https://github.com/ai-forever/Kandinsky-3.git"  # Install from GitHub
                 ],
                 "env_vars": {
                     "HF_HOME": "/data/models",
@@ -133,23 +133,26 @@ def create_deployment(model_name: str, model_path: str):
                         except ImportError:
                             print("⚠️  Kandinsky 3 not available in diffusers")
                         
-                        # Try to install and import custom kandinsky3 package
+                        # Try to install and import custom kandinsky3 package from GitHub
                         try:
-                            print("   Attempting to install kandinsky3 custom package...")
+                            print("   Attempting to install kandinsky3 from GitHub...")
                             result2 = subprocess.run(
-                                [ray_python, "-m", "pip", "install", "kandinsky3"],
-                                timeout=300
+                                [ray_python, "-m", "pip", "install", "git+https://github.com/ai-forever/Kandinsky-3.git"],
+                                timeout=600  # Longer timeout for git clone
                             )
                             if result2.returncode == 0:
                                 try:
                                     from kandinsky3 import get_T2I_pipeline
-                                    print("✅ Kandinsky 3 custom package installed")
-                                except ImportError:
-                                    print("⚠️  kandinsky3 package installed but import failed")
+                                    print("✅ Kandinsky 3 custom package installed from GitHub")
+                                except ImportError as import_err:
+                                    print(f"⚠️  kandinsky3 package installed but import failed: {import_err}")
+                                    print("   You may need to add the repo to Python path")
                             else:
-                                print("⚠️  Could not install kandinsky3 custom package")
+                                print("⚠️  Could not install kandinsky3 from GitHub")
+                                print("   Note: kandinsky3 must be installed from GitHub, not PyPI")
                         except Exception as e:
                             print(f"⚠️  kandinsky3 custom package installation failed: {e}")
+                            print("   Note: Install manually with: pip install git+https://github.com/ai-forever/Kandinsky-3.git")
                         
                         print("✅ Kandinsky pipelines installed successfully")
                     else:
