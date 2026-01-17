@@ -70,8 +70,15 @@ def create_deployment(model_name: str, model_path: str):
                     "dm-haiku>=0.0.9",  # DeepMind Haiku (needed by GraphCast)
                     "dm-tree>=0.1.8",  # DeepMind Tree
                     "huggingface-hub>=0.17.0",  # For downloading from HuggingFace
-                    # GraphCast package (install from GitHub)
-                    "git+https://github.com/google-deepmind/graphcast.git",  # Official GraphCast library
+                    # Additional GraphCast dependencies (from setup.py)
+                    "chex>=0.1.0",  # Testing utilities for JAX
+                    "jraph>=0.0.6",  # Graph neural networks for JAX
+                    "matplotlib>=3.5.0",  # Plotting
+                    "pandas>=1.3.0",  # Data manipulation
+                    "scipy>=1.7.0",  # Scientific computing
+                    "typing_extensions>=4.0.0",  # Type hints
+                    # Note: GraphCast library is loaded from /data/models/graphcast (NFS mount)
+                    # Run: bash ray-graphcast-endpoints/setup_graphcast.sh to clone it
                 ],
                 "env_vars": {
                     "HF_HOME": "/data/models",
@@ -250,10 +257,25 @@ def create_deployment(model_name: str, model_path: str):
                                     task_config=self.task_config
                                 )
                                 
+                                # For GPU inference, we may need to override attention config
+                                # (splash_attention is TPU-only, GPU needs triblockdiag_mha)
+                                # This is handled automatically by the model, but we note it here
+                                print("   ⚠️  Note: GPU inference uses triblockdiag_mha attention (TPU uses splash_attention)")
+                                print("   ⚠️  GPU inference is slower and requires more memory than TPU")
+                                
                                 self.is_graphcast = True
                                 model_loaded = True
                                 print(f"   ✅ Loaded GraphCast from HuggingFace: {repo_id}")
                                 print(f"   Model config: resolution={getattr(self.model_config, 'resolution', 'N/A')}")
+                                
+                                # Warn about resource requirements
+                                if hasattr(self.model_config, 'resolution'):
+                                    res = str(self.model_config.resolution)
+                                    if '0.25' in res or '0p25' in res:
+                                        print("   ⚠️  WARNING: 0.25deg model requires ~300GB RAM and ~60GB GPU vRAM")
+                                    elif '1.0' in res or '1p0' in res or '1deg' in res:
+                                        print("   ⚠️  WARNING: 1deg model requires ~24GB RAM and ~16GB GPU vRAM")
+                                
                                 break
                                 
                             except Exception as e:

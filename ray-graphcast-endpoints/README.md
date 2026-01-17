@@ -86,12 +86,21 @@ GraphCast models are loaded from HuggingFace automatically. The model will:
 3. Discover input/output schema automatically
 4. Scale to zero after 5 minutes of inactivity
 
-## Notes
+## Resource Requirements
 
+**Important**: GraphCast is resource-intensive. Based on [Google's documentation](https://github.com/google-deepmind/graphcast/blob/main/docs/cloud_vm_setup.md):
+
+### GPU Requirements (for inference)
+- **0.25deg GenCast**: ~300GB System Memory and ~60GB GPU vRAM
+- **1deg GenCast**: ~24GB System Memory and ~16GB GPU vRAM
+
+### Notes
 - GraphCast models may require specific input formats (atmospheric data, coordinates, etc.)
 - The actual input/output format depends on the specific GraphCast model version
 - Check the `/schema` endpoint to see what inputs the model expects
 - Models are cached in `/data/models` (NFS shared storage)
+- **GPU attention**: For GPU inference, GraphCast uses `triblockdiag_mha` attention (not `splash_attention` which is TPU-only)
+- **Performance**: GPU inference is slower than TPU (~25min vs ~8min for 30-step rollout on 0.25deg model)
 
 ## Troubleshooting
 
