@@ -181,12 +181,23 @@ def main():
             print(f"❌ --model-path is required when deploying")
             sys.exit(1)
         
-        if not os.path.exists(args.model_path):
-            print(f"❌ Model file not found: {args.model_path}")
+        # Check if it's a HuggingFace model ID (contains '/') or a local path
+        is_hf_model_id = '/' in args.model_path and not os.path.isabs(args.model_path) and not os.path.exists(args.model_path)
+        is_local_file = os.path.isfile(args.model_path)
+        is_local_dir = os.path.isdir(args.model_path)
+        
+        if not (is_hf_model_id or is_local_file or is_local_dir):
+            print(f"❌ Model path not found: {args.model_path}")
+            print(f"   Expected: HuggingFace model ID (e.g., 'ai-forever/Kandinsky3.1'),")
+            print(f"            local file path, or local directory path")
             sys.exit(1)
         
-        if not (args.model_path.endswith('.ckpt') or args.model_path.endswith('.safetensors')):
+        if is_local_file and not (args.model_path.endswith('.ckpt') or args.model_path.endswith('.safetensors')):
             print(f"⚠️  Warning: Model file is not .ckpt or .safetensors: {args.model_path}")
+        
+        if is_hf_model_id:
+            print(f"📦 Using HuggingFace model ID: {args.model_path}")
+            print(f"   Model will be downloaded automatically on first use")
     
     # Get model name
     model_name = args.model_name or os.path.basename(args.model_path).replace(".ckpt", "").replace(".safetensors", "")
