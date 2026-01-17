@@ -930,19 +930,42 @@ def create_deployment(model_name: str, model_path: str):
                         kwargs[param_name] = value
             
             # Handle legacy/fallback parameters not in schema
-            # (for backwards compatibility)
-            if "prompt" not in kwargs and "prompt" in data:
-                kwargs["prompt"] = data["prompt"]
-            if "negative_prompt" not in kwargs and "negative_prompt" in data:
-                kwargs["negative_prompt"] = data.get("negative_prompt")
-            if "num_inference_steps" not in kwargs:
-                kwargs["num_inference_steps"] = data.get("num_inference_steps", defaults.get("num_inference_steps", 50))
-            if "guidance_scale" not in kwargs:
+            # (for backwards compatibility and parameter name mapping)
+            
+            # Map common parameter names to pipeline-specific names
+            # kandinsky3 uses "text" instead of "prompt", "steps" instead of "num_inference_steps"
+            if "text" not in kwargs and "prompt" in data:
+                # Map "prompt" -> "text" for kandinsky3, or use "prompt" for other pipelines
+                if "text" in all_inputs:
+                    kwargs["text"] = data["prompt"]
+                elif "prompt" in all_inputs:
+                    kwargs["prompt"] = data["prompt"]
+            
+            if "negative_text" not in kwargs and "negative_prompt" in data:
+                # Map "negative_prompt" -> "negative_text" for kandinsky3
+                if "negative_text" in all_inputs:
+                    kwargs["negative_text"] = data.get("negative_prompt")
+                elif "negative_prompt" in all_inputs:
+                    kwargs["negative_prompt"] = data.get("negative_prompt")
+            
+            # Map "num_inference_steps" -> "steps" for kandinsky3
+            if "steps" not in kwargs and "num_inference_steps" in data:
+                if "steps" in all_inputs:
+                    kwargs["steps"] = data.get("num_inference_steps")
+                elif "num_inference_steps" in all_inputs:
+                    kwargs["num_inference_steps"] = data.get("num_inference_steps")
+            
+            # Only add fallback defaults if the parameter exists in the schema
+            # Don't add parameters that don't exist in the discovered schema
+            if "guidance_scale" in all_inputs and "guidance_scale" not in kwargs:
                 kwargs["guidance_scale"] = data.get("guidance_scale", defaults.get("guidance_scale", 7.5))
-            if "width" not in kwargs:
+            
+            if "width" in all_inputs and "width" not in kwargs:
                 kwargs["width"] = data.get("width", defaults.get("width", 512))
-            if "height" not in kwargs:
+            
+            if "height" in all_inputs and "height" not in kwargs:
                 kwargs["height"] = data.get("height", defaults.get("height", 512))
+            
             if "seed" in data and "generator" not in kwargs:
                 seed = data.get("seed")
                 if seed is not None:
