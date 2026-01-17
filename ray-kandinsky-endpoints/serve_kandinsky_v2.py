@@ -120,6 +120,7 @@ def create_deployment(model_name: str, model_path: str):
             self.schema = None  # Will be populated after model loads
             self.loading_error = None  # Store loading errors for API responses
             self.loading_started = False  # Track if loading has started
+            self._pipeline_needs_to_cuda = True  # Flag to check if pipeline needs .to("cuda")
             
             # Check if Kandinsky is available (at least V2.2)
             if not KANDINSKY_V22_AVAILABLE:
@@ -472,9 +473,12 @@ def create_deployment(model_name: str, model_path: str):
                                 # get_T2I_pipeline loads from ai-forever/Kandinsky3.1 automatically
                                 # It doesn't accept a model_path parameter
                                 print("   Loading pipeline (will download/cache model from HuggingFace)...")
+                                print(f"   Device: {device_map}")
                                 self.pipeline = get_T2I_pipeline(device_map, dtype_map)
+                                # kandinsky3 pipeline is already on GPU via device_map, no need for .to()
+                                print("   ✅ Pipeline loaded (already on GPU via device_map)")
                                 self.is_v3 = True
-                                print("   ✅ Loaded Kandinsky 3 using custom package")
+                                self._pipeline_needs_to_cuda = False  # Flag to skip .to() later
                             except Exception as e:
                                 error_msg = str(e)
                                 print(f"   ⚠️  Failed to load with custom package: {error_msg}")
@@ -561,9 +565,32 @@ def create_deployment(model_name: str, model_path: str):
                             )
                             self.is_v3 = False
                     
-                    # Move to GPU
-                    self.pipeline = self.pipeline.to("cuda")
-                    self.pipeline.enable_attention_slicing()
+                    # Move to GPU (only for diffusers pipelines, kandinsky3 custom package is already on GPU)
+                    if self._pipeline_needs_to_cuda:
+                        if hasattr(self.pipeline, 'to'):
+                            print("   Moving pipeline to GPU...")
+                            self.pipeline = self.pipeline.to("cuda")
+                            print("   ✅ Pipeline moved to GPU")
+                        else:
+                            print("   ⚠️  Pipeline doesn't have .to() method (may already be on GPU)")
+                    
+                    # Verify GPU usage
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            print(f"   ✅ CUDA available: {torch.cuda.get_device_name(0)}")
+                            print(f"   GPU memory allocated: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
+                        else:
+                            print("   ⚠️  CUDA not available - model may be on CPU")
+                    except Exception as gpu_check_err:
+                        print(f"   ⚠️  Could not verify GPU: {gpu_check_err}")
+                    
+                    # Enable attention slicing if available (saves memory)
+                    if hasattr(self.pipeline, 'enable_attention_slicing'):
+                        self.pipeline.enable_attention_slicing()
+                        print("   ✅ Attention slicing enabled")
+                    else:
+                        print("   ⚠️  Pipeline doesn't support attention slicing")
                     
                     # Discover schema after model is loaded
                     self.schema = self._discover_pipeline_schema()
