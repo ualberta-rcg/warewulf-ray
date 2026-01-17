@@ -152,28 +152,8 @@ def main():
         print("⚠️  Diffusers not found.")
         print("   Note: Diffusers will be installed automatically on worker nodes via runtime_env")
     
-    # Start Ray Serve with HTTP options
-    RAY_SERVE_PORT = 8000
-    try:
-        from ray.serve.config import HTTPOptions
-        http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
-        try:
-            serve.start(detached=True, http_options=http_options)
-            print(f"✅ Ray Serve started on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
-        except Exception as start_error:
-            try:
-                status = serve.status()
-                print(f"🔄 Ray Serve is already running, restarting to apply HTTP options...")
-                serve.shutdown()
-                time.sleep(2)
-                serve.start(detached=True, http_options=http_options)
-                print(f"✅ Ray Serve restarted on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
-            except Exception as restart_error:
-                print(f"⚠️  Ray Serve setup issue: {restart_error}")
-                print(f"   Continuing anyway - Serve may already be configured correctly")
-    except Exception as e:
-        print(f"⚠️  Ray Serve setup issue: {e}")
-        print(f"   Continuing anyway...")
+    # Ray Serve should already be running on the cluster
+    # Just connect and deploy (no need to start/restart Serve)
     
     # Validate model path (if not listing)
     if not args.list_models:

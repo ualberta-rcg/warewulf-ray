@@ -19,7 +19,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
     from ray import serve
-    from ray.serve.config import HTTPOptions
     import ray
     from ray.util import get_node_ip_address
 except ImportError:
@@ -47,23 +46,13 @@ def deploy_graphcast(model_name: str, model_path: str, app_name: str = None):
     print(f"   Model path: {model_path}")
     print(f"   Application: {app_name}")
     
-    # Initialize Ray
+    # Initialize Ray (connect to existing cluster)
     try:
         ray.init(address="auto", ignore_reinit_error=True)
     except Exception as e:
         print(f"⚠️  Ray init warning: {e}")
     
-    # Restart Ray Serve to ensure HTTP options are applied
-    try:
-        serve.shutdown()
-        time.sleep(2)
-    except:
-        pass
-    
-    # Start Ray Serve with proper HTTP options
-    serve.start(http_options=HTTPOptions(host="0.0.0.0", port=8000))
-    
-    # Create and deploy the app
+    # Create and deploy the app (Ray Serve should already be running on cluster)
     app = create_app(model_name, model_path)
     
     try:

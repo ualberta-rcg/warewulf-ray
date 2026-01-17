@@ -197,30 +197,8 @@ def main():
         print("   Note: vLLM will be installed automatically on worker nodes via runtime_env")
     
     # Start Ray Serve with HTTP options
-    # Always restart to ensure HTTP options are applied (like ray-endpoints does)
-    RAY_SERVE_PORT = 8000  # Use 8000 (user prefers this port)
-    try:
-        from ray.serve.config import HTTPOptions
-        # Always try to start with HTTP options (will fail if already running, that's OK)
-        http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
-        try:
-            serve.start(detached=True, http_options=http_options)
-            print(f"✅ Ray Serve started on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
-        except Exception as start_error:
-            # Serve might already be running - restart it to apply HTTP options
-            try:
-                status = serve.status()
-                print(f"🔄 Ray Serve is already running, restarting to apply HTTP options...")
-                serve.shutdown()
-                time.sleep(2)  # Give it time to fully shutdown
-                serve.start(detached=True, http_options=http_options)
-                print(f"✅ Ray Serve restarted on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
-            except Exception as restart_error:
-                print(f"⚠️  Ray Serve setup issue: {restart_error}")
-                print(f"   Continuing anyway - Serve may already be configured correctly")
-    except Exception as e:
-        print(f"⚠️  Ray Serve setup issue: {e}")
-        print(f"   Continuing anyway...")
+    # Ray Serve should already be running on the cluster
+    # Just connect and deploy (no need to start/restart Serve)
     
     # Deploy the endpoint
     try:
