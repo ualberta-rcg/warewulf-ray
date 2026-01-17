@@ -4,6 +4,7 @@ Version 2: Separate deployments per model with autoscaling and dynamic input dis
 """
 
 import os
+import sys
 import asyncio
 import time
 import psutil
@@ -15,6 +16,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from ray import serve
+
+# Add kandinsky3 repo to path if it exists
+KANDINSKY3_REPO_PATH = os.environ.get("KANDINSKY3_PATH", "/data/models/kandinsky3")
+if os.path.exists(KANDINSKY3_REPO_PATH) and KANDINSKY3_REPO_PATH not in sys.path:
+    sys.path.insert(0, KANDINSKY3_REPO_PATH)
 
 # Try to import torch separately (needed even if diffusers import fails)
 try:
@@ -78,10 +84,10 @@ def create_deployment(model_name: str, model_path: str):
                     "fastapi>=0.100.0",
                     "psutil>=5.9.0",
                     "nvidia-ml-py>=12.0.0",
-                    "git+https://github.com/ai-forever/Kandinsky-3.git"  # Install from GitHub
                 ],
                 "env_vars": {
                     "HF_HOME": "/data/models",
+                    "KANDINSKY3_PATH": "/data/models/kandinsky3",  # Path where we'll clone the repo
                 }
             }
         }
@@ -133,26 +139,57 @@ def create_deployment(model_name: str, model_path: str):
                         except ImportError:
                             print("⚠️  Kandinsky 3 not available in diffusers")
                         
-                        # Try to install and import custom kandinsky3 package from GitHub
+                        # Try to setup kandinsky3 from GitHub
+                        # The repo doesn't have setup.py, so we need to clone it and add to path
                         try:
-                            print("   Attempting to install kandinsky3 from GitHub...")
-                            result2 = subprocess.run(
-                                [ray_python, "-m", "pip", "install", "git+https://github.com/ai-forever/Kandinsky-3.git"],
-                                timeout=600  # Longer timeout for git clone
-                            )
-                            if result2.returncode == 0:
+                            kandinsky3_path = os.environ.get("KANDINSKY3_PATH", "/data/models/kandinsky3")
+                            print(f"   Setting up kandinsky3 from GitHub to: {kandinsky3_path}")
+                            
+                            # Check if repository exists
+                            kandinsky3_module_path = os.path.join(kandinsky3_path, "kandinsky3")
+                            if not os.path.exists(kandinsky3_module_path):
+                                print("   Cloning Kandinsky-3 repository...")
+                                # Create parent directory if needed
+                                parent_dir = os.path.dirname(kandinsky3_path)
+                                if parent_dir:
+                                    os.makedirs(parent_dir, exist_ok=True)
+                                
+                                # Clone the repository
+                                result2 = subprocess.run(
+                                    ["git", "clone", "https://github.com/ai-forever/Kandinsky-3.git", kandinsky3_path],
+                                    timeout=300,
+                                    capture_output=True,
+                                    text=True
+                                )
+                                if result2.returncode != 0:
+                                    print(f"   ⚠️  git clone failed: {result2.stderr}")
+                                    print("   Note: You can manually clone with:")
+                                    print(f"   git clone https://github.com/ai-forever/Kandinsky-3.git {kandinsky3_path}")
+                                else:
+                                    print("   ✅ Cloned Kandinsky-3 repository")
+                            else:
+                                print("   ✅ Kandinsky-3 repository already exists")
+                            
+                            # Add to Python path
+                            if os.path.exists(kandinsky3_module_path):
+                                if kandinsky3_path not in sys.path:
+                                    sys.path.insert(0, kandinsky3_path)
                                 try:
                                     from kandinsky3 import get_T2I_pipeline
-                                    print("✅ Kandinsky 3 custom package installed from GitHub")
+                                    print("✅ Kandinsky 3 package available from GitHub")
                                 except ImportError as import_err:
-                                    print(f"⚠️  kandinsky3 package installed but import failed: {import_err}")
-                                    print("   You may need to add the repo to Python path")
+                                    print(f"⚠️  kandinsky3 import failed: {import_err}")
+                                    print(f"   Make sure the repo is cloned to: {kandinsky3_path}")
+                                    print(f"   Module path should be: {kandinsky3_module_path}")
                             else:
-                                print("⚠️  Could not install kandinsky3 from GitHub")
-                                print("   Note: kandinsky3 must be installed from GitHub, not PyPI")
+                                print(f"⚠️  kandinsky3 module not found at: {kandinsky3_module_path}")
+                                print(f"   Expected structure: {kandinsky3_path}/kandinsky3/")
                         except Exception as e:
-                            print(f"⚠️  kandinsky3 custom package installation failed: {e}")
-                            print("   Note: Install manually with: pip install git+https://github.com/ai-forever/Kandinsky-3.git")
+                            print(f"⚠️  kandinsky3 setup failed: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            print("   Note: You can manually clone with:")
+                            print("   git clone https://github.com/ai-forever/Kandinsky-3.git /data/models/kandinsky3")
                         
                         print("✅ Kandinsky pipelines installed successfully")
                     else:
@@ -174,10 +211,38 @@ def create_deployment(model_name: str, model_path: str):
                     
                     # Detect if it's V3 or V2.2 based on filename
                     model_lower = model_path.lower() if model_path else ""
-                    is_v3 = ("kandinsky3" in model_lower or "v3" in model_lower) and KANDINSKY_V3_AVAILABLE
+                    is_v3_requested = "kandinsky3" in model_lower or "v3" in model_lower
                     
-                    if is_v3 and not KANDINSKY_V3_AVAILABLE:
-                        print("⚠️  Kandinsky V3 requested but not available in diffusers")
+                    # Check availability dynamically (since we can't update globals in nested function)
+                    import sys
+                    try:
+                        from diffusers import Kandinsky3Pipeline
+                        kandinsky_v3_diffusers_available = True
+                    except ImportError:
+                        kandinsky_v3_diffusers_available = False
+                    
+                    # Try to import kandinsky3 (may need to add path first)
+                    kandinsky_v3_custom_available = False
+                    try:
+                        # Try importing directly first
+                        from kandinsky3 import get_T2I_pipeline
+                        kandinsky_v3_custom_available = True
+                    except ImportError:
+                        # Try adding the path from environment variable
+                        kandinsky3_path = os.environ.get("KANDINSKY3_PATH", "/data/models/kandinsky3")
+                        if kandinsky3_path not in sys.path and os.path.exists(kandinsky3_path):
+                            sys.path.insert(0, kandinsky3_path)
+                        try:
+                            from kandinsky3 import get_T2I_pipeline
+                            kandinsky_v3_custom_available = True
+                        except ImportError:
+                            kandinsky_v3_custom_available = False
+                    
+                    kandinsky_v3_available = kandinsky_v3_diffusers_available or kandinsky_v3_custom_available
+                    is_v3 = is_v3_requested and kandinsky_v3_available
+                    
+                    if is_v3_requested and not kandinsky_v3_available:
+                        print("⚠️  Kandinsky V3 requested but not available")
                         print("   Falling back to Kandinsky V2.2")
                         is_v3 = False
                     
