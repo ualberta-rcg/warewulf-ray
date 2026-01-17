@@ -842,7 +842,20 @@ def create_deployment(model_name: str, model_path: str):
                 with torch.inference_mode():
                     result = self.pipeline(**pipeline_kwargs)
                 
-                image = result.images[0]
+                # Handle different return formats:
+                # - diffusers pipelines return object with .images attribute
+                # - kandinsky3 custom package returns list of images directly
+                if hasattr(result, 'images'):
+                    # Standard diffusers format
+                    image = result.images[0]
+                elif isinstance(result, list):
+                    # kandinsky3 custom package returns list directly
+                    image = result[0]
+                elif hasattr(result, '__getitem__'):
+                    # Try to get first item if it's indexable
+                    image = result[0]
+                else:
+                    raise ValueError(f"Unexpected result type from pipeline: {type(result)}")
                 
                 query_end_time = time.time()
                 query_duration = query_end_time - query_start_time
