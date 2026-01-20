@@ -1,5 +1,4 @@
-# Base image: NVIDIA Triton Inference Server (includes Triton, Python 3.10, CUDA, etc.)
-FROM nvcr.io/nvidia/tritonserver:23.12-py3
+FROM ubuntu:24.04
 
 # Set noninteractive frontend
 ENV DEBIAN_FRONTEND=noninteractive
@@ -127,29 +126,32 @@ RUN apt-get install -y \
       systemd-vconsole-setup.service \
       systemd-timesyncd.service
 
-# Note: The NVIDIA Triton image already includes:
-# - Python 3.10 (matches Triton's Python bindings)
-# - Triton Inference Server binary at /opt/tritonserver/bin/tritonserver
-# - Triton Python bindings (import tritonserver works)
-# - CUDA toolkit and libraries
-# - All necessary dependencies
-
-# --- 7. Install Ray (full installation with all extras) ---
-# Note: The base image already has Python 3.10, which matches Triton's Python bindings
-# CUDA toolkit is already available in the base image
-# Install Ray in a virtual environment to avoid conflicts
-# ray[all] includes: default, serve, tune, rllib, data, train, air, gpu, and more
-# tritonclient[all]: Client libraries for connecting to Triton servers (HTTP, gRPC)
-# Note: tritonserver Python API is already available (import tritonserver works)
-RUN python3 -m venv /opt/ray && \
-    /opt/ray/bin/pip install --no-cache-dir --upgrade pip && \
-    /opt/ray/bin/pip install --no-cache-dir "ray[all]" && \
-    /opt/ray/bin/pip install --no-cache-dir "tritonclient[all]" && \
-    echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/profile.d/ray.sh && \
-    echo 'export PATH="/opt/ray/bin:$PATH"' >> /etc/bash.bashrc
-
-# Add Ray venv to PATH for all sessions
-ENV PATH="/opt/ray/bin:$PATH"
+# --- 6. Fetch and Apply SCAP Security Guide Remediation (optional) ---
+# Install SCAP scanner and apply CIS Level 2 Server profile remediation
+RUN apt-get install -y openscap-scanner libopenscap25t64 && \
+    export SSG_VERSION=$(curl -s https://api.github.com/repos/ComplianceAsCode/content/releases/latest | grep -oP '"tag_name": "\K[^"]+' || echo "0.1.66") && \
+    echo "🔄 Using SCAP Security Guide version: $SSG_VERSION" && \
+    SSG_VERSION_NO_V=$(echo "$SSG_VERSION" | sed 's/^v//') && \
+    wget -O /ssg.zip "https://github.com/ComplianceAsCode/content/releases/download/${SSG_VERSION}/scap-security-guide-${SSG_VERSION_NO_V}.zip" && \
+    mkdir -p /usr/share/xml/scap/ssg/content && \
+    if [ -f "/ssg.zip" ]; then \
+        unzip -jo /ssg.zip "scap-security-guide-${SSG_VERSION_NO_V}/*" -d /usr/share/xml/scap/ssg/content/ && \
+        rm -f /ssg.zip; \
+    else \
+        echo "❌ Failed to download SCAP Security Guide"; exit 1; \
+    fi && \
+    SCAP_GUIDE=$(find /usr/share/xml/scap/ssg/content -name "ssg-ubuntu*-ds.xml" | sort | tail -n1) && \
+    echo "📘 Found SCAP guide: $SCAP_GUIDE" && \
+    oscap xccdf eval \
+        --remediate \
+        --profile xccdf_org.ssgproject.content_profile_cis_level2_server \
+        --results /root/oscap-results.xml \
+        --report /root/oscap-report.html \
+        "$SCAP_GUIDE" || true && \
+    rm -rf /usr/share/xml/scap/ssg/content && \
+    apt-get remove -y openscap-scanner libopenscap25t64 && \
+    apt-get autoremove -y && \
+    apt-get clean
 
 # --- 8. Install NVIDIA Driver if enabled (requires kernel installation) ---
 # Note: CUDA toolkit not installed here - will be available via CVMFS
@@ -239,7 +241,7 @@ RUN apt-mark manual libvulkan1 mesa-vulkan-drivers libglvnd0 && \
         libegl-dev libgles-dev libdmx-dev libfontconfig-dev \
         build-essential dkms gcc g++ make pkg-config dpkg-dev \
         libfreetype-dev libpng-dev uuid-dev libexpat1-dev \
-        libpython3-dev libpython3.10-dev python3-dev python3.10-dev \
+        libpython3-dev libpython3.12-dev python3-dev python3.12-dev \
         python-babel-localedata humanity-icon-theme iso-codes; do \
         dpkg -l "$pkg" >/dev/null 2>&1 && apt-get purge -y "$pkg" || true; \
     done && \
