@@ -75,6 +75,7 @@ def create_deployment(model_name: str, model_path: str):
             "num_gpus": 1,
             "runtime_env": {
                 "pip": [
+                    "packaging>=21.0",  # Required by Ray for runtime env verification
                     "diffusers>=0.21.0",
                     "accelerate>=0.20.0",
                     "transformers>=4.30.0",
