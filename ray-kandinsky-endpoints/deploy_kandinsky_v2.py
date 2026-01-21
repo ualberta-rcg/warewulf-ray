@@ -106,29 +106,42 @@ def main():
         print("⚠️  Diffusers not found.")
         print("   Note: Diffusers will be installed automatically on worker nodes via runtime_env")
     
-    # Start Ray Serve with HTTP options to listen on all interfaces
+    # Start Ray Serve with HTTP options to listen on all interfaces (0.0.0.0)
+    # This ensures it's accessible from other machines, not just localhost
     RAY_SERVE_PORT = 8000  # Default Ray Serve port
+    RAY_SERVE_HOST = "0.0.0.0"  # Listen on all interfaces
+    
     try:
         from ray.serve.config import HTTPOptions
-        http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
+        http_options = HTTPOptions(host=RAY_SERVE_HOST, port=RAY_SERVE_PORT)
+        
+        # Always shutdown and restart to ensure correct host configuration
+        # This is important because Ray Serve might have been started with 127.0.0.1
         try:
-            serve.start(detached=True, http_options=http_options)
-            print(f"✅ Ray Serve started on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
-        except Exception as start_error:
-            # Serve might already be running - check and restart if needed
-            try:
-                status = serve.status()
-                print(f"🔄 Ray Serve is already running, restarting to apply HTTP options...")
-                serve.shutdown()
-                time.sleep(2)
-                serve.start(detached=True, http_options=http_options)
-                print(f"✅ Ray Serve restarted on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
-            except Exception as restart_error:
-                print(f"⚠️  Ray Serve setup issue: {restart_error}")
-                print(f"   Continuing anyway - Serve may already be configured correctly")
+            status = serve.status()
+            print(f"🔄 Ray Serve is already running, restarting to ensure host={RAY_SERVE_HOST}...")
+            serve.shutdown()
+            time.sleep(2)
+        except:
+            # Serve not running, that's fine
+            pass
+        
+        # Start with correct host (0.0.0.0 to listen on all interfaces)
+        serve.start(detached=True, http_options=http_options)
+        print(f"✅ Ray Serve started on {RAY_SERVE_HOST}:{RAY_SERVE_PORT} (accessible from network)")
+        
+        # Verify it's actually listening on the right host
+        try:
+            status = serve.status()
+            print(f"   Ray Serve status: {status}")
+        except:
+            pass
+            
     except Exception as e:
-        print(f"⚠️  Ray Serve setup issue: {e}")
-        print(f"   Continuing anyway...")
+        print(f"❌ Ray Serve setup failed: {e}")
+        print(f"   Attempting to continue anyway...")
+        import traceback
+        traceback.print_exc()
     
     # Use Kandinsky 3 (community version with proper diffusers structure)
     print(f"📦 Using Kandinsky 3 from HuggingFace: {model_id}")
