@@ -22,37 +22,9 @@ KANDINSKY3_REPO_PATH = os.environ.get("KANDINSKY3_PATH", "/data/models/kandinsky
 if os.path.exists(KANDINSKY3_REPO_PATH) and KANDINSKY3_REPO_PATH not in sys.path:
     sys.path.insert(0, KANDINSKY3_REPO_PATH)
 
-# Try to import torch separately (needed even if diffusers import fails)
-try:
-    import torch
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-    print("⚠️  PyTorch not available. Install with: pip install torch")
-
-# Try to import Kandinsky pipelines from diffusers
-try:
-    from diffusers import KandinskyV22Pipeline
-    KANDINSKY_V22_AVAILABLE = True
-except ImportError:
-    KANDINSKY_V22_AVAILABLE = False
-
-# Try to import Kandinsky 3 from diffusers (may not be available in all versions)
-try:
-    from diffusers import Kandinsky3Pipeline
-    KANDINSKY_V3_DIFFUSERS_AVAILABLE = True
-except ImportError:
-    KANDINSKY_V3_DIFFUSERS_AVAILABLE = False
-
-# Try to import Kandinsky 3 custom package (the official way)
-try:
-    from kandinsky3 import get_T2I_pipeline
-    KANDINSKY_V3_CUSTOM_AVAILABLE = True
-except ImportError:
-    KANDINSKY_V3_CUSTOM_AVAILABLE = False
-
-KANDINSKY_V3_AVAILABLE = KANDINSKY_V3_DIFFUSERS_AVAILABLE or KANDINSKY_V3_CUSTOM_AVAILABLE
-KANDINSKY_AVAILABLE = KANDINSKY_V22_AVAILABLE or KANDINSKY_V3_AVAILABLE
+# Note: We don't import torch/diffusers at module level to avoid Triton library registration conflicts
+# All imports happen inside the replica's __init__ method where they're needed
+# This prevents issues when Ray creates multiple replicas in the same process
 
 
 def create_deployment(model_name: str, model_path: str):
@@ -166,146 +138,147 @@ def create_deployment(model_name: str, model_path: str):
                     import traceback
                     traceback.print_exc()
             
-            # Check if Kandinsky is available (at least V2.2)
-            if not KANDINSKY_V22_AVAILABLE:
-                print("⚠️  Kandinsky pipelines not available. Attempting to install...")
+            # Import torch and diffusers (they're in runtime_env, so should be available)
+            # Don't delete and re-import - this causes Triton library registration conflicts
+            try:
+                import torch
+                from diffusers import KandinskyV22Pipeline
+                print("✅ PyTorch and Diffusers available")
+            except ImportError as import_err:
+                print(f"⚠️  PyTorch/Diffusers not available: {import_err}")
+                print("   Attempting to install...")
                 try:
-                    ray_python = "/opt/ray/bin/python"
-                    if os.path.exists(ray_python):
-                        print("   Installing diffusers and dependencies...")
-                        result = subprocess.run(
-                            [ray_python, "-m", "pip", "install", 
-                             "diffusers>=0.21.0", "accelerate>=0.20.0", "torchvision>=0.15.0"],
-                            timeout=600
-                        )
-                        if result.returncode != 0:
-                            raise RuntimeError(f"pip install failed with return code {result.returncode}")
-                        
-                        # Reload modules
-                        import importlib
-                        for mod in ['diffusers', 'torch', 'PIL']:
-                            if mod in sys.modules:
-                                del sys.modules[mod]
-                        import torch
-                        from diffusers import KandinskyV22Pipeline
-                        
-                        # Re-import to update module-level variables (we can't use global in nested function)
-                        # Instead, we'll check availability dynamically in load_model
-                        try:
-                            from diffusers import Kandinsky3Pipeline
-                            print("✅ Kandinsky 3 available in diffusers")
-                        except ImportError:
-                            print("⚠️  Kandinsky 3 not available in diffusers")
-                        
-                        # Try to setup kandinsky3 from GitHub
-                        # The repo doesn't have setup.py, so we need to clone it and add to path
-                        try:
-                            kandinsky3_path = os.environ.get("KANDINSKY3_PATH", "/data/models/kandinsky3")
-                            print(f"   Setting up kandinsky3 from GitHub to: {kandinsky3_path}")
-                            
-                            # Check if path is accessible
-                            if not os.path.exists(kandinsky3_path):
-                                print(f"   ⚠️  Path does not exist: {kandinsky3_path}")
-                                print("   Creating directory and cloning repository...")
-                                # Create parent directory if needed
-                                parent_dir = os.path.dirname(kandinsky3_path)
-                                if parent_dir:
-                                    os.makedirs(parent_dir, exist_ok=True)
-                                
-                                # Clone the repository
-                                result2 = subprocess.run(
-                                    ["git", "clone", "https://github.com/ai-forever/Kandinsky-3.git", kandinsky3_path],
-                                    timeout=300,
-                                    capture_output=True,
-                                    text=True
-                                )
-                                if result2.returncode != 0:
-                                    print(f"   ⚠️  git clone failed: {result2.stderr}")
-                                    print("   Note: You can manually clone with:")
-                                    print(f"   git clone https://github.com/ai-forever/Kandinsky-3.git {kandinsky3_path}")
-                                    raise RuntimeError(f"Failed to clone kandinsky3 repo: {result2.stderr}")
-                                else:
-                                    print("   ✅ Cloned Kandinsky-3 repository")
-                            
-                            # Check if repository exists and is accessible
-                            kandinsky3_module_path = os.path.join(kandinsky3_path, "kandinsky3")
-                            print(f"   Checking module path: {kandinsky3_module_path}")
-                            print(f"   Path exists: {os.path.exists(kandinsky3_path)}")
-                            print(f"   Module exists: {os.path.exists(kandinsky3_module_path)}")
-                            
-                            if not os.path.exists(kandinsky3_module_path):
-                                print(f"   ⚠️  kandinsky3 module not found at: {kandinsky3_module_path}")
-                                print(f"   Listing directory contents of {kandinsky3_path}:")
-                                try:
-                                    if os.path.exists(kandinsky3_path):
-                                        for item in os.listdir(kandinsky3_path):
-                                            item_path = os.path.join(kandinsky3_path, item)
-                                            print(f"     - {item} ({'dir' if os.path.isdir(item_path) else 'file'})")
-                                except Exception as list_err:
-                                    print(f"     Could not list directory: {list_err}")
-                                raise RuntimeError(f"kandinsky3 module not found at {kandinsky3_module_path}")
-                            
-                            # Add to Python path
-                            if kandinsky3_path not in sys.path:
-                                sys.path.insert(0, kandinsky3_path)
-                                print(f"   ✅ Added {kandinsky3_path} to sys.path")
-                            
-                            # Try to install requirements from the repo in the replica's environment
-                            # Use the current Python interpreter (replica's Python), not head node's
-                            requirements_file = os.path.join(kandinsky3_path, "requirements.txt")
-                            if os.path.exists(requirements_file):
-                                print(f"   Installing kandinsky3 requirements from: {requirements_file}")
-                                print(f"   Using Python: {sys.executable}")
-                                try:
-                                    replica_python = sys.executable
-                                    result3 = subprocess.run(
-                                        [replica_python, "-m", "pip", "install", "-r", requirements_file],
-                                        timeout=600,
-                                        capture_output=True,
-                                        text=True
-                                    )
-                                    if result3.returncode == 0:
-                                        print("   ✅ Installed kandinsky3 requirements in replica")
-                                    else:
-                                        print(f"   ⚠️  Some requirements may have failed (return code: {result3.returncode})")
-                                        if result3.stderr:
-                                            print(f"   stderr: {result3.stderr[:500]}")
-                                        if result3.stdout:
-                                            print(f"   stdout: {result3.stdout[:500]}")
-                                except Exception as req_err:
-                                    print(f"   ⚠️  Could not install requirements: {req_err}")
-                                    import traceback
-                                    traceback.print_exc()
-                            else:
-                                print(f"   ⚠️  requirements.txt not found at: {requirements_file}")
-                            
-                            # Try to import
-                            print(f"   Attempting to import kandinsky3 from: {kandinsky3_module_path}")
-                            print(f"   sys.path contains kandinsky3_path: {kandinsky3_path in sys.path}")
-                            try:
-                                from kandinsky3 import get_T2I_pipeline
-                                print("✅ Kandinsky 3 package available from GitHub")
-                            except ImportError as import_err:
-                                print(f"⚠️  kandinsky3 import failed: {import_err}")
-                                print(f"   Module path: {kandinsky3_module_path}")
-                                print(f"   Path exists: {os.path.exists(kandinsky3_module_path)}")
-                                print(f"   sys.path: {sys.path[:5]}...")  # First 5 entries
-                                import traceback
-                                traceback.print_exc()
-                                raise
-                        except Exception as e:
-                            print(f"⚠️  kandinsky3 setup failed: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            print("   Note: You can manually clone with:")
-                            print("   git clone https://github.com/ai-forever/Kandinsky-3.git /data/models/kandinsky3")
-                        
-                        print("✅ Kandinsky pipelines installed successfully")
+                    # Use the replica's Python (from runtime_env venv)
+                    replica_python = sys.executable
+                    print(f"   Using Python: {replica_python}")
+                    result = subprocess.run(
+                        [replica_python, "-m", "pip", "install", 
+                         "diffusers>=0.21.0", "accelerate>=0.20.0", "torchvision>=0.15.0"],
+                        timeout=600,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode != 0:
+                        raise RuntimeError(f"pip install failed with return code {result.returncode}")
+                    
+                    # Import after installation (don't delete from sys.modules - causes Triton conflicts)
+                    import torch
+                    from diffusers import KandinskyV22Pipeline
+                    print("✅ Installed and imported PyTorch/Diffusers")
+                except Exception as install_err:
+                    print(f"❌ Installation failed: {install_err}")
+                    raise ImportError(f"PyTorch/Diffusers not available and installation failed: {install_err}")
+            
+            # Check for Kandinsky 3 availability
+            try:
+                from diffusers import Kandinsky3Pipeline
+                print("✅ Kandinsky 3 available in diffusers")
+            except ImportError:
+                print("⚠️  Kandinsky 3 not available in diffusers (will try custom package)")
+            
+            # Try to setup kandinsky3 from GitHub if needed
+            # The repo doesn't have setup.py, so we need to clone it and add to path
+            try:
+                kandinsky3_path = os.environ.get("KANDINSKY3_PATH", "/data/models/kandinsky3")
+                print(f"   Setting up kandinsky3 from GitHub to: {kandinsky3_path}")
+                
+                # Check if path is accessible
+                if not os.path.exists(kandinsky3_path):
+                    print(f"   ⚠️  Path does not exist: {kandinsky3_path}")
+                    print("   Creating directory and cloning repository...")
+                    # Create parent directory if needed
+                    parent_dir = os.path.dirname(kandinsky3_path)
+                    if parent_dir:
+                        os.makedirs(parent_dir, exist_ok=True)
+                    
+                    # Clone the repository
+                    result2 = subprocess.run(
+                        ["git", "clone", "https://github.com/ai-forever/Kandinsky-3.git", kandinsky3_path],
+                        timeout=300,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result2.returncode != 0:
+                        print(f"   ⚠️  git clone failed: {result2.stderr}")
+                        print("   Note: You can manually clone with:")
+                        print(f"   git clone https://github.com/ai-forever/Kandinsky-3.git {kandinsky3_path}")
+                        raise RuntimeError(f"Failed to clone kandinsky3 repo: {result2.stderr}")
                     else:
-                        raise ImportError("Kandinsky not available and cannot install")
-                except Exception as e:
-                    print(f"❌ Failed to install Kandinsky: {e}")
-                    raise ImportError(f"Kandinsky not available and installation failed: {e}")
+                        print("   ✅ Cloned Kandinsky-3 repository")
+                
+                # Check if repository exists and is accessible
+                kandinsky3_module_path = os.path.join(kandinsky3_path, "kandinsky3")
+                print(f"   Checking module path: {kandinsky3_module_path}")
+                print(f"   Path exists: {os.path.exists(kandinsky3_path)}")
+                print(f"   Module exists: {os.path.exists(kandinsky3_module_path)}")
+                
+                if not os.path.exists(kandinsky3_module_path):
+                    print(f"   ⚠️  kandinsky3 module not found at: {kandinsky3_module_path}")
+                    print(f"   Listing directory contents of {kandinsky3_path}:")
+                    try:
+                        if os.path.exists(kandinsky3_path):
+                            for item in os.listdir(kandinsky3_path):
+                                item_path = os.path.join(kandinsky3_path, item)
+                                print(f"     - {item} ({'dir' if os.path.isdir(item_path) else 'file'})")
+                    except Exception as list_err:
+                        print(f"     Could not list directory: {list_err}")
+                    raise RuntimeError(f"kandinsky3 module not found at {kandinsky3_module_path}")
+                
+                # Add to Python path
+                if kandinsky3_path not in sys.path:
+                    sys.path.insert(0, kandinsky3_path)
+                    print(f"   ✅ Added {kandinsky3_path} to sys.path")
+                
+                # Try to install requirements from the repo in the replica's environment
+                # Use the current Python interpreter (replica's Python), not head node's
+                requirements_file = os.path.join(kandinsky3_path, "requirements.txt")
+                if os.path.exists(requirements_file):
+                    print(f"   Installing kandinsky3 requirements from: {requirements_file}")
+                    print(f"   Using Python: {sys.executable}")
+                    try:
+                        replica_python = sys.executable
+                        result3 = subprocess.run(
+                            [replica_python, "-m", "pip", "install", "-r", requirements_file],
+                            timeout=600,
+                            capture_output=True,
+                            text=True
+                        )
+                        if result3.returncode == 0:
+                            print("   ✅ Installed kandinsky3 requirements in replica")
+                        else:
+                            print(f"   ⚠️  Some requirements may have failed (return code: {result3.returncode})")
+                            if result3.stderr:
+                                print(f"   stderr: {result3.stderr[:500]}")
+                            if result3.stdout:
+                                print(f"   stdout: {result3.stdout[:500]}")
+                    except Exception as req_err:
+                        print(f"   ⚠️  Could not install requirements: {req_err}")
+                        import traceback
+                        traceback.print_exc()
+                else:
+                    print(f"   ⚠️  requirements.txt not found at: {requirements_file}")
+                
+                # Try to import
+                print(f"   Attempting to import kandinsky3 from: {kandinsky3_module_path}")
+                print(f"   sys.path contains kandinsky3_path: {kandinsky3_path in sys.path}")
+                try:
+                    from kandinsky3 import get_T2I_pipeline
+                    print("✅ Kandinsky 3 package available from GitHub")
+                except ImportError as import_err:
+                    print(f"⚠️  kandinsky3 import failed: {import_err}")
+                    print(f"   Module path: {kandinsky3_module_path}")
+                    print(f"   Path exists: {os.path.exists(kandinsky3_module_path)}")
+                    print(f"   sys.path: {sys.path[:5]}...")  # First 5 entries
+                    import traceback
+                    traceback.print_exc()
+                    # Don't raise - kandinsky3 might not be needed if using diffusers version
+            except Exception as e:
+                print(f"⚠️  kandinsky3 setup failed: {e}")
+                import traceback
+                traceback.print_exc()
+                print("   Note: You can manually clone with:")
+                print("   git clone https://github.com/ai-forever/Kandinsky-3.git /data/models/kandinsky3")
+                # Don't raise - continue even if kandinsky3 setup fails
             
             # Load model in background thread
             def load_model():
