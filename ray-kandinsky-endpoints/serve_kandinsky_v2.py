@@ -166,55 +166,88 @@ def create_deployment(model_name: str, model_path: str):
                             print("   ✅ Loaded text-to-image without variant parameter")
                     
                     # Try to load image-to-image pipeline
-                    print("   Attempting to load image-to-image pipeline...")
-                    try:
-                        self.img2img_pipeline = AutoPipelineForImage2Image.from_pretrained(
-                            model_path,
-                            variant="fp16",
-                            torch_dtype=torch.float16
-                        )
-                        print("   ✅ Loaded image-to-image pipeline")
-                    except Exception as img2img_err:
-                        print(f"   ⚠️  Image-to-image not available: {img2img_err}")
-                        # Some models might support image_to_image method on the base pipeline
-                        if hasattr(self.pipeline, 'image_to_image'):
-                            print("   ✅ Base pipeline supports image_to_image method")
-                            self.img2img_pipeline = self.pipeline  # Use base pipeline
+                    # Note: We can reuse the base pipeline if it supports image_to_image method
+                    # This saves memory since we don't need to load duplicate components
+                    print("   Checking image-to-image capability...")
+                    if hasattr(self.pipeline, 'image_to_image'):
+                        print("   ✅ Base pipeline supports image_to_image method (reusing base pipeline)")
+                        self.img2img_pipeline = self.pipeline  # Reuse base pipeline to save memory
+                    else:
+                        try:
+                            print("   Attempting to load separate image-to-image pipeline...")
+                            self.img2img_pipeline = AutoPipelineForImage2Image.from_pretrained(
+                                model_path,
+                                variant="fp16",
+                                torch_dtype=torch.float16
+                            )
+                            print("   ✅ Loaded separate image-to-image pipeline")
+                        except Exception as img2img_err:
+                            print(f"   ⚠️  Image-to-image not available: {img2img_err}")
+                            self.img2img_pipeline = None
                     
                     # Try to load inpainting pipeline
-                    print("   Attempting to load inpainting pipeline...")
-                    try:
-                        self.inpaint_pipeline = AutoPipelineForInpainting.from_pretrained(
-                            model_path,
-                            variant="fp16",
-                            torch_dtype=torch.float16
-                        )
-                        print("   ✅ Loaded inpainting pipeline")
-                    except Exception as inpaint_err:
-                        print(f"   ⚠️  Inpainting pipeline not available: {inpaint_err}")
-                        # Some models might support inpaint method on the base pipeline
-                        if hasattr(self.pipeline, 'inpaint'):
-                            print("   ✅ Base pipeline supports inpaint method")
-                            self.inpaint_pipeline = self.pipeline  # Use base pipeline
+                    # Note: We can reuse the base pipeline if it supports inpaint method
+                    print("   Checking inpainting capability...")
+                    if hasattr(self.pipeline, 'inpaint'):
+                        print("   ✅ Base pipeline supports inpaint method (reusing base pipeline)")
+                        self.inpaint_pipeline = self.pipeline  # Reuse base pipeline to save memory
+                    else:
+                        try:
+                            print("   Attempting to load separate inpainting pipeline...")
+                            self.inpaint_pipeline = AutoPipelineForInpainting.from_pretrained(
+                                model_path,
+                                variant="fp16",
+                                torch_dtype=torch.float16
+                            )
+                            print("   ✅ Loaded separate inpainting pipeline")
+                        except Exception as inpaint_err:
+                            print(f"   ⚠️  Inpainting pipeline not available: {inpaint_err}")
+                            self.inpaint_pipeline = None
                     
                     # Move all pipelines to GPU
-                    pipelines_to_move = [
-                        ("text-to-image", self.pipeline),
-                        ("image-to-image", self.img2img_pipeline),
-                        ("inpainting", self.inpaint_pipeline)
-                    ]
+                    # Track which pipeline objects we've already moved to avoid moving the same object twice
+                    moved_pipelines = {}
                     
-                    for name, pipeline in pipelines_to_move:
-                        if pipeline is not None and hasattr(pipeline, 'to'):
-                            print(f"   Moving {name} pipeline to GPU...")
-                            pipeline = pipeline.to("cuda")
-                            if name == "text-to-image":
-                                self.pipeline = pipeline
-                            elif name == "image-to-image":
-                                self.img2img_pipeline = pipeline
-                            elif name == "inpainting":
-                                self.inpaint_pipeline = pipeline
-                            print(f"   ✅ {name} pipeline moved to GPU")
+                    # Move text-to-image pipeline
+                    if self.pipeline is not None and hasattr(self.pipeline, 'to'):
+                        pipeline_id = id(self.pipeline)
+                        if pipeline_id not in moved_pipelines:
+                            print("   Moving text-to-image pipeline to GPU...")
+                            moved_pipeline = self.pipeline.to("cuda")
+                            moved_pipelines[pipeline_id] = moved_pipeline
+                            self.pipeline = moved_pipeline
+                            print("   ✅ text-to-image pipeline moved to GPU")
+                        else:
+                            self.pipeline = moved_pipelines[pipeline_id]
+                            print("   ✅ text-to-image pipeline already moved")
+                    
+                    # Move image-to-image pipeline (if separate)
+                    if self.img2img_pipeline is not None:
+                        pipeline_id = id(self.img2img_pipeline)
+                        if pipeline_id in moved_pipelines:
+                            # Already moved (shared with another pipeline)
+                            self.img2img_pipeline = moved_pipelines[pipeline_id]
+                            print("   ✅ image-to-image uses shared pipeline (already on GPU)")
+                        elif hasattr(self.img2img_pipeline, 'to'):
+                            print("   Moving image-to-image pipeline to GPU...")
+                            moved_pipeline = self.img2img_pipeline.to("cuda")
+                            moved_pipelines[pipeline_id] = moved_pipeline
+                            self.img2img_pipeline = moved_pipeline
+                            print("   ✅ image-to-image pipeline moved to GPU")
+                    
+                    # Move inpainting pipeline (if separate)
+                    if self.inpaint_pipeline is not None:
+                        pipeline_id = id(self.inpaint_pipeline)
+                        if pipeline_id in moved_pipelines:
+                            # Already moved (shared with another pipeline)
+                            self.inpaint_pipeline = moved_pipelines[pipeline_id]
+                            print("   ✅ inpainting uses shared pipeline (already on GPU)")
+                        elif hasattr(self.inpaint_pipeline, 'to'):
+                            print("   Moving inpainting pipeline to GPU...")
+                            moved_pipeline = self.inpaint_pipeline.to("cuda")
+                            moved_pipelines[pipeline_id] = moved_pipeline
+                            self.inpaint_pipeline = moved_pipeline
+                            print("   ✅ inpainting pipeline moved to GPU")
                     
                     # Verify GPU usage
                     try:
