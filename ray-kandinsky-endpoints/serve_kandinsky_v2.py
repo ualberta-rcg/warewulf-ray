@@ -77,7 +77,9 @@ def create_deployment(model_name: str, model_path: str):
             import subprocess
             
             self.model_loaded = False
-            self.pipeline = None
+            self.pipeline = None  # Main text-to-image pipeline
+            self.img2img_pipeline = None  # Image-to-image pipeline
+            self.inpaint_pipeline = None  # Inpainting pipeline
             self.model_name = model_name
             self.model_path = model_path
             self.schema = None  # Will be populated after model loads
@@ -88,7 +90,7 @@ def create_deployment(model_name: str, model_path: str):
             # Don't delete and re-import - this causes Triton library registration conflicts
             try:
                 import torch
-                from diffusers import AutoPipelineForText2Image
+                from diffusers import Kandinsky3Pipeline, AutoPipelineForText2Image
                 print("✅ PyTorch and Diffusers available")
             except ImportError as import_err:
                 print(f"⚠️  PyTorch/Diffusers not available: {import_err}")
@@ -109,7 +111,7 @@ def create_deployment(model_name: str, model_path: str):
                     
                     # Import after installation (don't delete from sys.modules - causes Triton conflicts)
                     import torch
-                    from diffusers import AutoPipelineForText2Image
+                    from diffusers import Kandinsky3Pipeline, AutoPipelineForText2Image
                     print("✅ Installed and imported PyTorch/Diffusers")
                 except Exception as install_err:
                     print(f"❌ Installation failed: {install_err}")
@@ -120,40 +122,99 @@ def create_deployment(model_name: str, model_path: str):
                 try:
                     # Import torch in the function scope to avoid UnboundLocalError
                     import torch
-                    from diffusers import AutoPipelineForText2Image
+                    from diffusers import (
+                        Kandinsky3Pipeline, 
+                        AutoPipelineForText2Image,
+                        AutoPipelineForImage2Image,
+                        AutoPipelineForInpainting
+                    )
                     
                     self.loading_started = True
                     print(f"🚀 Loading Kandinsky 3 model in background: {model_name}")
                     print(f"   HuggingFace Model ID: {model_path}")
                     
-                    # Load from HuggingFace using AutoPipelineForText2Image (more reliable for Kandinsky 3)
-                    # This automatically detects the correct pipeline class and handles model structure
-                    print(f"   Loading from HuggingFace: {model_path}")
+                    # Load text-to-image pipeline (main pipeline)
+                    print(f"   Loading text-to-image pipeline from HuggingFace: {model_path}")
                     try:
-                        # Try with variant="fp16" first (recommended for Kandinsky 3)
+                        # Try AutoPipelineForText2Image with variant="fp16" (known to work)
+                        print("   Attempting to load text-to-image with AutoPipelineForText2Image...")
                         self.pipeline = AutoPipelineForText2Image.from_pretrained(
                             model_path,
                             variant="fp16",
                             torch_dtype=torch.float16
                         )
-                        print("   ✅ Loaded with fp16 variant")
-                    except Exception as variant_err:
-                        print(f"   ⚠️  Failed to load with fp16 variant: {variant_err}")
-                        print("   Trying without variant parameter...")
-                        # Fallback: try without variant
-                        self.pipeline = AutoPipelineForText2Image.from_pretrained(
+                        print("   ✅ Loaded text-to-image with AutoPipelineForText2Image (fp16 variant)")
+                    except Exception as auto_err:
+                        print(f"   ⚠️  Failed to load with AutoPipelineForText2Image: {auto_err}")
+                        print("   Trying Kandinsky3Pipeline...")
+                        try:
+                            # Fallback to Kandinsky3Pipeline
+                            self.pipeline = Kandinsky3Pipeline.from_pretrained(
+                                model_path,
+                                variant="fp16",
+                                torch_dtype=torch.float16
+                            )
+                            print("   ✅ Loaded text-to-image with Kandinsky3Pipeline (fp16 variant)")
+                        except Exception as kandinsky3_err:
+                            print(f"   ⚠️  Failed to load with fp16 variant: {kandinsky3_err}")
+                            print("   Trying without variant parameter...")
+                            # Final fallback: try without variant
+                            self.pipeline = AutoPipelineForText2Image.from_pretrained(
+                                model_path,
+                                torch_dtype=torch.float16
+                            )
+                            print("   ✅ Loaded text-to-image without variant parameter")
+                    
+                    # Try to load image-to-image pipeline
+                    print("   Attempting to load image-to-image pipeline...")
+                    try:
+                        self.img2img_pipeline = AutoPipelineForImage2Image.from_pretrained(
                             model_path,
+                            variant="fp16",
                             torch_dtype=torch.float16
                         )
-                        print("   ✅ Loaded without variant parameter")
+                        print("   ✅ Loaded image-to-image pipeline")
+                    except Exception as img2img_err:
+                        print(f"   ⚠️  Image-to-image not available: {img2img_err}")
+                        # Some models might support image_to_image method on the base pipeline
+                        if hasattr(self.pipeline, 'image_to_image'):
+                            print("   ✅ Base pipeline supports image_to_image method")
+                            self.img2img_pipeline = self.pipeline  # Use base pipeline
                     
-                    # Move to GPU
-                    if hasattr(self.pipeline, 'to'):
-                        print("   Moving pipeline to GPU...")
-                        self.pipeline = self.pipeline.to("cuda")
-                        print("   ✅ Pipeline moved to GPU")
-                    else:
-                        print("   ⚠️  Pipeline doesn't have .to() method (may already be on GPU)")
+                    # Try to load inpainting pipeline
+                    print("   Attempting to load inpainting pipeline...")
+                    try:
+                        self.inpaint_pipeline = AutoPipelineForInpainting.from_pretrained(
+                            model_path,
+                            variant="fp16",
+                            torch_dtype=torch.float16
+                        )
+                        print("   ✅ Loaded inpainting pipeline")
+                    except Exception as inpaint_err:
+                        print(f"   ⚠️  Inpainting pipeline not available: {inpaint_err}")
+                        # Some models might support inpaint method on the base pipeline
+                        if hasattr(self.pipeline, 'inpaint'):
+                            print("   ✅ Base pipeline supports inpaint method")
+                            self.inpaint_pipeline = self.pipeline  # Use base pipeline
+                    
+                    # Move all pipelines to GPU
+                    pipelines_to_move = [
+                        ("text-to-image", self.pipeline),
+                        ("image-to-image", self.img2img_pipeline),
+                        ("inpainting", self.inpaint_pipeline)
+                    ]
+                    
+                    for name, pipeline in pipelines_to_move:
+                        if pipeline is not None and hasattr(pipeline, 'to'):
+                            print(f"   Moving {name} pipeline to GPU...")
+                            pipeline = pipeline.to("cuda")
+                            if name == "text-to-image":
+                                self.pipeline = pipeline
+                            elif name == "image-to-image":
+                                self.img2img_pipeline = pipeline
+                            elif name == "inpainting":
+                                self.inpaint_pipeline = pipeline
+                            print(f"   ✅ {name} pipeline moved to GPU")
                     
                     # Verify GPU usage
                     try:
@@ -166,18 +227,29 @@ def create_deployment(model_name: str, model_path: str):
                     except Exception as gpu_check_err:
                         print(f"   ⚠️  Could not verify GPU: {gpu_check_err}")
                     
-                    # Enable attention slicing if available (saves memory)
-                    if hasattr(self.pipeline, 'enable_attention_slicing'):
-                        self.pipeline.enable_attention_slicing()
-                        print("   ✅ Attention slicing enabled")
-                    else:
-                        print("   ⚠️  Pipeline doesn't support attention slicing")
+                    # Enable attention slicing on all pipelines (saves memory)
+                    for name, pipeline in [("text-to-image", self.pipeline), 
+                                          ("image-to-image", self.img2img_pipeline),
+                                          ("inpainting", self.inpaint_pipeline)]:
+                        if pipeline is not None and hasattr(pipeline, 'enable_attention_slicing'):
+                            pipeline.enable_attention_slicing()
+                            print(f"   ✅ Attention slicing enabled on {name} pipeline")
                     
-                    # Discover schema after model is loaded
+                    # Discover schema after model is loaded (for main text-to-image pipeline)
                     self.schema = self._discover_pipeline_schema()
                     print(f"✅ Model loaded: {model_name}")
                     print(f"   Discovered {len(self.schema.get('inputs', {}).get('required', []))} required inputs")
                     print(f"   Discovered {len(self.schema.get('inputs', {}).get('optional', []))} optional inputs")
+                    
+                    # Report available capabilities
+                    capabilities = []
+                    if self.pipeline is not None:
+                        capabilities.append("text-to-image")
+                    if self.img2img_pipeline is not None:
+                        capabilities.append("image-to-image")
+                    if self.inpaint_pipeline is not None:
+                        capabilities.append("inpainting")
+                    print(f"   Available capabilities: {', '.join(capabilities)}")
                     
                     self.model_loaded = True
                     self.loading_error = None  # Clear any previous errors
@@ -207,28 +279,52 @@ def create_deployment(model_name: str, model_path: str):
                     "required": [],
                     "optional": []
                 },
-                "methods": {}
+                "methods": {},
+                "available_pipelines": {}
             }
             
-            # Discover capabilities by checking available methods
-            if hasattr(self.pipeline, '__call__'):
+            # Discover capabilities by checking available pipelines and methods
+            if self.pipeline is not None:
                 schema["capabilities"].append("text-to-image")
+                schema["available_pipelines"]["text-to-image"] = type(self.pipeline).__name__
             
-            if hasattr(self.pipeline, 'image_to_image'):
+            if self.img2img_pipeline is not None:
                 schema["capabilities"].append("image-to-image")
-                try:
-                    sig = inspect.signature(self.pipeline.image_to_image)
-                    schema["methods"]["image_to_image"] = self._parse_signature(sig)
-                except:
-                    pass
+                schema["available_pipelines"]["image-to-image"] = type(self.img2img_pipeline).__name__
+                # Try to get image_to_image method signature
+                pipeline_to_check = self.img2img_pipeline
+                if hasattr(pipeline_to_check, 'image_to_image'):
+                    try:
+                        sig = inspect.signature(pipeline_to_check.image_to_image)
+                        schema["methods"]["image_to_image"] = self._parse_signature(sig)
+                    except:
+                        pass
+                elif hasattr(pipeline_to_check, '__call__'):
+                    # If no image_to_image method, check __call__ signature
+                    try:
+                        sig = inspect.signature(pipeline_to_check.__call__)
+                        schema["methods"]["image_to_image"] = self._parse_signature(sig)
+                    except:
+                        pass
             
-            if hasattr(self.pipeline, 'inpaint'):
+            if self.inpaint_pipeline is not None:
                 schema["capabilities"].append("inpainting")
-                try:
-                    sig = inspect.signature(self.pipeline.inpaint)
-                    schema["methods"]["inpaint"] = self._parse_signature(sig)
-                except:
-                    pass
+                schema["available_pipelines"]["inpainting"] = type(self.inpaint_pipeline).__name__
+                # Try to get inpaint method signature
+                pipeline_to_check = self.inpaint_pipeline
+                if hasattr(pipeline_to_check, 'inpaint'):
+                    try:
+                        sig = inspect.signature(pipeline_to_check.inpaint)
+                        schema["methods"]["inpaint"] = self._parse_signature(sig)
+                    except:
+                        pass
+                elif hasattr(pipeline_to_check, '__call__'):
+                    # If no inpaint method, check __call__ signature
+                    try:
+                        sig = inspect.signature(pipeline_to_check.__call__)
+                        schema["methods"]["inpaint"] = self._parse_signature(sig)
+                    except:
+                        pass
             
             # Get the main __call__ signature (text-to-image)
             try:
@@ -299,6 +395,10 @@ def create_deployment(model_name: str, model_path: str):
             
             if path.endswith("/generate") or path.endswith("/text-to-image"):
                 return await self.handle_generate(request)
+            elif path.endswith("/image-to-image") or path.endswith("/img2img"):
+                return await self.handle_image_to_image(request)
+            elif path.endswith("/inpaint") or path.endswith("/inpainting"):
+                return await self.handle_inpaint(request)
             elif path.endswith("/schema"):
                 return await self.handle_schema(request)
             elif path.endswith("/models"):
@@ -461,6 +561,245 @@ def create_deployment(model_name: str, model_path: str):
                     status_code=500
                 )
         
+        async def handle_image_to_image(self, request: Request) -> Any:
+            """Handle image-to-image generation requests"""
+            try:
+                # Check if model is ready
+                model_ready = (
+                    hasattr(self, 'model_loaded') and 
+                    self.model_loaded and 
+                    hasattr(self, 'img2img_pipeline') and 
+                    self.img2img_pipeline is not None
+                )
+                
+                if not model_ready:
+                    return JSONResponse(
+                        {
+                            "status": "scaling_up",
+                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60 seconds.",
+                            "model": self.model_name,
+                            "estimated_ready_time_seconds": 60,
+                            "retry_after": 60,
+                            "poll_url": str(request.url),
+                            "action": "retry_later"
+                        },
+                        status_code=202,
+                        headers={
+                            "Retry-After": "60",
+                            "X-Status": "scaling-up",
+                            "X-Action": "retry-later",
+                            "Content-Type": "application/json"
+                        }
+                    )
+                
+                query_start_time = time.time()
+                
+                # Get request data
+                data = await request.json()
+                
+                # Ensure we have an image
+                if "image" not in data:
+                    return JSONResponse(
+                        {"error": "Missing required parameter: 'image' (base64 encoded image data)"},
+                        status_code=400
+                    )
+                
+                # Build pipeline kwargs using the img2img pipeline schema
+                # Temporarily switch schema discovery to img2img pipeline
+                original_pipeline = self.pipeline
+                self.pipeline = self.img2img_pipeline
+                try:
+                    # Discover img2img schema if not already done
+                    img2img_schema = self._discover_pipeline_schema()
+                    original_schema = self.schema
+                    self.schema = img2img_schema
+                    pipeline_kwargs = self._build_pipeline_kwargs(data)
+                    self.schema = original_schema
+                finally:
+                    self.pipeline = original_pipeline
+                
+                # Ensure torch is available
+                try:
+                    import torch
+                except ImportError:
+                    return JSONResponse(
+                        {"error": "PyTorch is not available. Please install torch."},
+                        status_code=500
+                    )
+                
+                # Generate image
+                with torch.inference_mode():
+                    # Use image_to_image method if available, otherwise use __call__ with image parameter
+                    if hasattr(self.img2img_pipeline, 'image_to_image'):
+                        result = self.img2img_pipeline.image_to_image(**pipeline_kwargs)
+                    else:
+                        result = self.img2img_pipeline(**pipeline_kwargs)
+                
+                # Handle diffusers pipeline return format
+                if hasattr(result, 'images'):
+                    image = result.images[0]
+                else:
+                    raise ValueError(f"Unexpected result type from pipeline: {type(result)}")
+                
+                query_end_time = time.time()
+                query_duration = query_end_time - query_start_time
+                metrics_end = self._get_resource_metrics()
+                
+                # Convert image to base64
+                from PIL import Image
+                buffered = io.BytesIO()
+                image.save(buffered, format="PNG")
+                img_base64 = base64.b64encode(buffered.getvalue()).decode()
+                image_data = f"data:image/png;base64,{img_base64}"
+                
+                compute_metrics = {
+                    "query_duration_seconds": round(query_duration, 3),
+                    "replica_cpu_percent": metrics_end.get("cpu_percent", 0),
+                    "replica_memory_mb": metrics_end.get("memory_mb", 0),
+                    "replica_num_cpus": metrics_end.get("num_cpus", 1),
+                    "replica_gpu_memory_allocated_mb": metrics_end.get("gpu_memory_allocated_mb", 0),
+                    "replica_gpu_memory_reserved_mb": metrics_end.get("gpu_memory_reserved_mb", 0),
+                    "replica_gpu_memory_total_mb": metrics_end.get("gpu_memory_total_mb", 0),
+                    "replica_gpu_memory_used_mb": metrics_end.get("gpu_memory_used_mb", metrics_end.get("gpu_memory_allocated_mb", 0)),
+                    "replica_gpu_utilization_percent": metrics_end.get("gpu_utilization_percent", 0),
+                }
+                
+                return JSONResponse({
+                    "status": "success",
+                    "model": self.model_name,
+                    "capability": "image-to-image",
+                    "image": image_data,
+                    "parameters": pipeline_kwargs,
+                    "compute_metrics": compute_metrics
+                })
+            except Exception as e:
+                return JSONResponse(
+                    {"error": str(e)},
+                    status_code=500
+                )
+        
+        async def handle_inpaint(self, request: Request) -> Any:
+            """Handle inpainting requests"""
+            try:
+                # Check if model is ready
+                model_ready = (
+                    hasattr(self, 'model_loaded') and 
+                    self.model_loaded and 
+                    hasattr(self, 'inpaint_pipeline') and 
+                    self.inpaint_pipeline is not None
+                )
+                
+                if not model_ready:
+                    return JSONResponse(
+                        {
+                            "status": "scaling_up",
+                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60 seconds.",
+                            "model": self.model_name,
+                            "estimated_ready_time_seconds": 60,
+                            "retry_after": 60,
+                            "poll_url": str(request.url),
+                            "action": "retry_later"
+                        },
+                        status_code=202,
+                        headers={
+                            "Retry-After": "60",
+                            "X-Status": "scaling-up",
+                            "X-Action": "retry-later",
+                            "Content-Type": "application/json"
+                        }
+                    )
+                
+                query_start_time = time.time()
+                
+                # Get request data
+                data = await request.json()
+                
+                # Ensure we have required parameters
+                if "image" not in data:
+                    return JSONResponse(
+                        {"error": "Missing required parameter: 'image' (base64 encoded image data)"},
+                        status_code=400
+                    )
+                if "mask_image" not in data:
+                    return JSONResponse(
+                        {"error": "Missing required parameter: 'mask_image' (base64 encoded mask image data, white pixels = area to inpaint)"},
+                        status_code=400
+                    )
+                
+                # Build pipeline kwargs using the inpaint pipeline schema
+                # Temporarily switch schema discovery to inpaint pipeline
+                original_pipeline = self.pipeline
+                self.pipeline = self.inpaint_pipeline
+                try:
+                    # Discover inpaint schema if not already done
+                    inpaint_schema = self._discover_pipeline_schema()
+                    original_schema = self.schema
+                    self.schema = inpaint_schema
+                    pipeline_kwargs = self._build_pipeline_kwargs(data)
+                    self.schema = original_schema
+                finally:
+                    self.pipeline = original_pipeline
+                
+                # Ensure torch is available
+                try:
+                    import torch
+                except ImportError:
+                    return JSONResponse(
+                        {"error": "PyTorch is not available. Please install torch."},
+                        status_code=500
+                    )
+                
+                # Generate image
+                with torch.inference_mode():
+                    # Use inpaint method if available, otherwise use __call__ with image and mask_image parameters
+                    if hasattr(self.inpaint_pipeline, 'inpaint'):
+                        result = self.inpaint_pipeline.inpaint(**pipeline_kwargs)
+                    else:
+                        result = self.inpaint_pipeline(**pipeline_kwargs)
+                
+                # Handle diffusers pipeline return format
+                if hasattr(result, 'images'):
+                    image = result.images[0]
+                else:
+                    raise ValueError(f"Unexpected result type from pipeline: {type(result)}")
+                
+                query_end_time = time.time()
+                query_duration = query_end_time - query_start_time
+                metrics_end = self._get_resource_metrics()
+                
+                # Convert image to base64
+                from PIL import Image
+                buffered = io.BytesIO()
+                image.save(buffered, format="PNG")
+                img_base64 = base64.b64encode(buffered.getvalue()).decode()
+                image_data = f"data:image/png;base64,{img_base64}"
+                
+                compute_metrics = {
+                    "query_duration_seconds": round(query_duration, 3),
+                    "replica_cpu_percent": metrics_end.get("cpu_percent", 0),
+                    "replica_memory_mb": metrics_end.get("memory_mb", 0),
+                    "replica_num_cpus": metrics_end.get("num_cpus", 1),
+                    "replica_gpu_memory_allocated_mb": metrics_end.get("gpu_memory_allocated_mb", 0),
+                    "replica_gpu_memory_reserved_mb": metrics_end.get("gpu_memory_reserved_mb", 0),
+                    "replica_gpu_memory_total_mb": metrics_end.get("gpu_memory_total_mb", 0),
+                    "replica_gpu_memory_used_mb": metrics_end.get("gpu_memory_used_mb", metrics_end.get("gpu_memory_allocated_mb", 0)),
+                    "replica_gpu_utilization_percent": metrics_end.get("gpu_utilization_percent", 0),
+                }
+                
+                return JSONResponse({
+                    "status": "success",
+                    "model": self.model_name,
+                    "capability": "inpainting",
+                    "image": image_data,
+                    "parameters": pipeline_kwargs,
+                    "compute_metrics": compute_metrics
+                })
+            except Exception as e:
+                return JSONResponse(
+                    {"error": str(e)},
+                    status_code=500
+                )
+        
         def _build_pipeline_kwargs(self, data: Dict) -> Dict:
             """Build pipeline kwargs from request data using discovered schema"""
             kwargs = {}
@@ -510,44 +849,9 @@ def create_deployment(model_name: str, model_path: str):
                     else:
                         kwargs[param_name] = value
             
-            # Handle legacy/fallback parameters not in schema
-            # (for backwards compatibility and parameter name mapping)
-            
-            # Map common parameter names to pipeline-specific names
-            # kandinsky3 uses "text" instead of "prompt", "steps" instead of "num_inference_steps"
-            if (kwargs.get("text") is None or "text" not in kwargs) and "prompt" in data:
-                # Map "prompt" -> "text" for kandinsky3
-                if "text" in all_inputs:
-                    kwargs["text"] = data["prompt"]
-                elif "prompt" in all_inputs:
-                    kwargs["prompt"] = data["prompt"]
-            
-            if "negative_text" not in kwargs and "negative_prompt" in data:
-                # Map "negative_prompt" -> "negative_text" for kandinsky3
-                if "negative_text" in all_inputs:
-                    kwargs["negative_text"] = data.get("negative_prompt")
-                elif "negative_prompt" in all_inputs:
-                    kwargs["negative_prompt"] = data.get("negative_prompt")
-            
-            # Map "num_inference_steps" -> "steps" for kandinsky3
-            if "steps" not in kwargs and "num_inference_steps" in data:
-                if "steps" in all_inputs:
-                    kwargs["steps"] = data.get("num_inference_steps")
-                elif "num_inference_steps" in all_inputs:
-                    kwargs["num_inference_steps"] = data.get("num_inference_steps")
-            
-            # Only add fallback defaults if the parameter exists in the schema
-            # Don't add parameters that don't exist in the discovered schema
-            if "guidance_scale" in all_inputs and "guidance_scale" not in kwargs:
-                kwargs["guidance_scale"] = data.get("guidance_scale", defaults.get("guidance_scale", 7.5))
-            
-            if "width" in all_inputs and "width" not in kwargs:
-                kwargs["width"] = data.get("width", defaults.get("width", 512))
-            
-            if "height" in all_inputs and "height" not in kwargs:
-                kwargs["height"] = data.get("height", defaults.get("height", 512))
-            
-            if "seed" in data and "generator" not in kwargs:
+            # Handle seed -> generator conversion (if seed is provided but generator is expected)
+            # This is a type conversion, not a parameter name remapping
+            if "seed" in data and "generator" in all_inputs and "generator" not in kwargs:
                 seed = data.get("seed")
                 if seed is not None:
                     generator = torch.Generator(device="cuda").manual_seed(seed)
