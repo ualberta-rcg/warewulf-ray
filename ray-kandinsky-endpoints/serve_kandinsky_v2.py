@@ -130,7 +130,8 @@ def create_deployment(model_name: str, model_path: str):
                     print(f"   Loading from HuggingFace: {model_path}")
                     self.pipeline = Kandinsky3Pipeline.from_pretrained(
                         model_path,
-                        torch_dtype=torch.float16
+                        torch_dtype=torch.float16,
+                        use_safetensors=False  # Allow loading from pickle files if safetensors not available
                     )
                     
                     # Move to GPU
