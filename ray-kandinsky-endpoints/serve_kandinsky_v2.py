@@ -96,7 +96,7 @@ def create_deployment(model_name: str, model_path: str):
                     "fsspec>=2023.5.0",
                     "hydra-core>=1.2.0",
                     "albumentations>=1.3.0",
-                    "bezier>=2021.2.12",
+                    # Note: bezier is installed manually with --no-build-isolation in __init__
                     # Note: pytorch_lightning, webdataset, s3fs, wandb are optional for inference
                 ],
                 "env_vars": {
@@ -122,6 +122,39 @@ def create_deployment(model_name: str, model_path: str):
             self.loading_error = None  # Store loading errors for API responses
             self.loading_started = False  # Track if loading has started
             self._pipeline_needs_to_cuda = True  # Flag to check if pipeline needs .to("cuda")
+            
+            # Install bezier with --no-build-isolation (required for proper build)
+            try:
+                import bezier
+                print("✅ bezier already available")
+            except ImportError:
+                print("⚠️  bezier not available. Installing with --no-build-isolation...")
+                try:
+                    replica_python = sys.executable
+                    result = subprocess.run(
+                        [replica_python, "-m", "pip", "install", "--no-build-isolation", "bezier>=2021.2.12"],
+                        timeout=300,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        print("✅ bezier installed successfully with --no-build-isolation")
+                        # Reload module
+                        if 'bezier' in sys.modules:
+                            del sys.modules['bezier']
+                        import bezier
+                    else:
+                        print(f"⚠️  bezier installation failed (return code: {result.returncode})")
+                        if result.stderr:
+                            print(f"   stderr: {result.stderr[:500]}")
+                        if result.stdout:
+                            print(f"   stdout: {result.stdout[:500]}")
+                        raise RuntimeError(f"Failed to install bezier: {result.stderr}")
+                except Exception as bezier_err:
+                    print(f"⚠️  Could not install bezier: {bezier_err}")
+                    # Don't fail completely - bezier might not be critical for all models
+                    import traceback
+                    traceback.print_exc()
             
             # Check if Kandinsky is available (at least V2.2)
             if not KANDINSKY_V22_AVAILABLE:
