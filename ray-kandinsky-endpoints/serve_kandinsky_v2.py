@@ -165,98 +165,122 @@ def create_deployment(model_name: str, model_path: str):
                             )
                             print("   ✅ Loaded text-to-image without variant parameter")
                     
-                    # Try to load image-to-image pipeline
-                    # Note: We can reuse the base pipeline if it supports image_to_image method
-                    # This saves memory since we don't need to load duplicate components
+                    # For image-to-image and inpainting, reuse the base pipeline to save memory
+                    # Kandinsky 3 pipelines are very large, so we can't load 3 separate copies
+                    # Instead, we'll use the base pipeline for all capabilities
                     print("   Checking image-to-image capability...")
+                    # Try to use AutoPipelineForImage2Image which can be created from the base pipeline
+                    # or check if base pipeline supports image_to_image method
                     if hasattr(self.pipeline, 'image_to_image'):
                         print("   ✅ Base pipeline supports image_to_image method (reusing base pipeline)")
                         self.img2img_pipeline = self.pipeline  # Reuse base pipeline to save memory
                     else:
+                        # Try to create img2img pipeline from base pipeline components (saves memory)
                         try:
-                            print("   Attempting to load separate image-to-image pipeline...")
-                            self.img2img_pipeline = AutoPipelineForImage2Image.from_pretrained(
-                                model_path,
-                                variant="fp16",
+                            print("   Attempting to create image-to-image pipeline from base components...")
+                            # AutoPipelineForImage2Image can reuse components from text-to-image pipeline
+                            self.img2img_pipeline = AutoPipelineForImage2Image.from_pipe(
+                                self.pipeline,
                                 torch_dtype=torch.float16
                             )
-                            print("   ✅ Loaded separate image-to-image pipeline")
+                            print("   ✅ Created image-to-image pipeline from base (shares components)")
                         except Exception as img2img_err:
-                            print(f"   ⚠️  Image-to-image not available: {img2img_err}")
+                            print(f"   ⚠️  Cannot create image-to-image from base: {img2img_err}")
+                            print("   ⚠️  Image-to-image will not be available (memory constraints)")
                             self.img2img_pipeline = None
                     
-                    # Try to load inpainting pipeline
-                    # Note: We can reuse the base pipeline if it supports inpaint method
+                    # For inpainting, reuse base pipeline or create from components
                     print("   Checking inpainting capability...")
                     if hasattr(self.pipeline, 'inpaint'):
                         print("   ✅ Base pipeline supports inpaint method (reusing base pipeline)")
                         self.inpaint_pipeline = self.pipeline  # Reuse base pipeline to save memory
                     else:
+                        # Try to create inpainting pipeline from base pipeline components
                         try:
-                            print("   Attempting to load separate inpainting pipeline...")
-                            self.inpaint_pipeline = AutoPipelineForInpainting.from_pretrained(
-                                model_path,
-                                variant="fp16",
+                            print("   Attempting to create inpainting pipeline from base components...")
+                            self.inpaint_pipeline = AutoPipelineForInpainting.from_pipe(
+                                self.pipeline,
                                 torch_dtype=torch.float16
                             )
-                            print("   ✅ Loaded separate inpainting pipeline")
+                            print("   ✅ Created inpainting pipeline from base (shares components)")
                         except Exception as inpaint_err:
-                            print(f"   ⚠️  Inpainting pipeline not available: {inpaint_err}")
+                            print(f"   ⚠️  Cannot create inpainting from base: {inpaint_err}")
+                            print("   ⚠️  Inpainting will not be available (memory constraints)")
                             self.inpaint_pipeline = None
                     
-                    # Move all pipelines to GPU
-                    # Track which pipeline objects we've already moved to avoid moving the same object twice
-                    moved_pipelines = {}
+                    # Use CPU offloading instead of moving everything to GPU
+                    # This saves memory by moving components to CPU when not in use
+                    # Kandinsky 3 is too large to fit multiple copies on GPU
+                    print("   Setting up CPU offloading to save GPU memory...")
                     
-                    # Move text-to-image pipeline
-                    if self.pipeline is not None and hasattr(self.pipeline, 'to'):
-                        pipeline_id = id(self.pipeline)
-                        if pipeline_id not in moved_pipelines:
-                            print("   Moving text-to-image pipeline to GPU...")
-                            moved_pipeline = self.pipeline.to("cuda")
-                            moved_pipelines[pipeline_id] = moved_pipeline
-                            self.pipeline = moved_pipeline
-                            print("   ✅ text-to-image pipeline moved to GPU")
-                        else:
-                            self.pipeline = moved_pipelines[pipeline_id]
-                            print("   ✅ text-to-image pipeline already moved")
+                    # Enable CPU offloading on all pipelines (moves components to CPU when idle)
+                    if self.pipeline is not None and hasattr(self.pipeline, 'enable_model_cpu_offload'):
+                        print("   Enabling CPU offloading on text-to-image pipeline...")
+                        self.pipeline.enable_model_cpu_offload()
+                        print("   ✅ CPU offloading enabled on text-to-image pipeline")
+                    elif self.pipeline is not None and hasattr(self.pipeline, 'to'):
+                        # Fallback: move to GPU if CPU offloading not available
+                        print("   Moving text-to-image pipeline to GPU (CPU offloading not available)...")
+                        self.pipeline = self.pipeline.to("cuda")
+                        print("   ✅ text-to-image pipeline moved to GPU")
                     
-                    # Move image-to-image pipeline (if separate)
+                    # Handle image-to-image pipeline
                     if self.img2img_pipeline is not None:
-                        pipeline_id = id(self.img2img_pipeline)
-                        if pipeline_id in moved_pipelines:
-                            # Already moved (shared with another pipeline)
-                            self.img2img_pipeline = moved_pipelines[pipeline_id]
-                            print("   ✅ image-to-image uses shared pipeline (already on GPU)")
+                        if self.img2img_pipeline is self.pipeline:
+                            print("   ✅ image-to-image uses base pipeline (CPU offloading already enabled)")
+                        elif hasattr(self.img2img_pipeline, 'enable_model_cpu_offload'):
+                            print("   Enabling CPU offloading on image-to-image pipeline...")
+                            self.img2img_pipeline.enable_model_cpu_offload()
+                            print("   ✅ CPU offloading enabled on image-to-image pipeline")
                         elif hasattr(self.img2img_pipeline, 'to'):
-                            print("   Moving image-to-image pipeline to GPU...")
-                            moved_pipeline = self.img2img_pipeline.to("cuda")
-                            moved_pipelines[pipeline_id] = moved_pipeline
-                            self.img2img_pipeline = moved_pipeline
-                            print("   ✅ image-to-image pipeline moved to GPU")
+                            print("   ⚠️  Moving image-to-image to GPU (may cause OOM if separate pipeline)...")
+                            try:
+                                import torch
+                                self.img2img_pipeline = self.img2img_pipeline.to("cuda")
+                                print("   ✅ image-to-image pipeline moved to GPU")
+                            except RuntimeError as oom_err:
+                                if "out of memory" in str(oom_err).lower() or "OOM" in str(oom_err):
+                                    print(f"   ❌ Out of memory loading image-to-image: {oom_err}")
+                                    print("   ⚠️  Image-to-image will not be available")
+                                    self.img2img_pipeline = None
+                                else:
+                                    raise
                     
-                    # Move inpainting pipeline (if separate)
+                    # Handle inpainting pipeline
                     if self.inpaint_pipeline is not None:
-                        pipeline_id = id(self.inpaint_pipeline)
-                        if pipeline_id in moved_pipelines:
-                            # Already moved (shared with another pipeline)
-                            self.inpaint_pipeline = moved_pipelines[pipeline_id]
-                            print("   ✅ inpainting uses shared pipeline (already on GPU)")
+                        if self.inpaint_pipeline is self.pipeline or self.inpaint_pipeline is self.img2img_pipeline:
+                            print("   ✅ inpainting uses shared pipeline (CPU offloading already enabled)")
+                        elif hasattr(self.inpaint_pipeline, 'enable_model_cpu_offload'):
+                            print("   Enabling CPU offloading on inpainting pipeline...")
+                            self.inpaint_pipeline.enable_model_cpu_offload()
+                            print("   ✅ CPU offloading enabled on inpainting pipeline")
                         elif hasattr(self.inpaint_pipeline, 'to'):
-                            print("   Moving inpainting pipeline to GPU...")
-                            moved_pipeline = self.inpaint_pipeline.to("cuda")
-                            moved_pipelines[pipeline_id] = moved_pipeline
-                            self.inpaint_pipeline = moved_pipeline
-                            print("   ✅ inpainting pipeline moved to GPU")
+                            print("   ⚠️  Moving inpainting to GPU (may cause OOM if separate pipeline)...")
+                            try:
+                                import torch
+                                self.inpaint_pipeline = self.inpaint_pipeline.to("cuda")
+                                print("   ✅ inpainting pipeline moved to GPU")
+                            except RuntimeError as oom_err:
+                                if "out of memory" in str(oom_err).lower() or "OOM" in str(oom_err):
+                                    print(f"   ❌ Out of memory loading inpainting: {oom_err}")
+                                    print("   ⚠️  Inpainting will not be available")
+                                    self.inpaint_pipeline = None
+                                else:
+                                    raise
                     
                     # Verify GPU usage
                     try:
                         import torch
                         if torch.cuda.is_available():
                             print(f"   ✅ CUDA available: {torch.cuda.get_device_name(0)}")
-                            print(f"   GPU memory allocated: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
+                            allocated = torch.cuda.memory_allocated(0) / 1024**3
+                            reserved = torch.cuda.memory_reserved(0) / 1024**3
+                            total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+                            print(f"   GPU memory allocated: {allocated:.2f} GB / {total:.2f} GB")
+                            print(f"   GPU memory reserved: {reserved:.2f} GB")
+                            print(f"   GPU memory free: {total - reserved:.2f} GB")
                         else:
-                            print("   ⚠️  CUDA not available - model may be on CPU")
+                            print("   ⚠️  CUDA not available - using CPU offloading")
                     except Exception as gpu_check_err:
                         print(f"   ⚠️  Could not verify GPU: {gpu_check_err}")
                     
