@@ -81,7 +81,7 @@ def main():
         "--address",
         type=str,
         default="auto",
-        help="Ray cluster address (default: auto)",
+        help="Ray cluster address (default: auto - detects head node)",
     )
     
     args = parser.parse_args()
@@ -89,12 +89,53 @@ def main():
     # Use Kandinsky 3 from HuggingFace (community version with proper diffusers structure)
     model_id = "kandinsky-community/kandinsky-3"
     
-    # Initialize Ray connection
+    # Initialize Ray connection - auto-detect head node IP
+    ray_address = args.address
+    if ray_address == "auto":
+        # Auto-detect head node IP and port
+        print("🔍 Auto-detecting Ray head node...")
+        try:
+            # Try to connect to auto first to get cluster info
+            ray.init(address="auto", ignore_reinit_error=True)
+            
+            # Get the head node IP from the cluster
+            nodes = ray.nodes()
+            head_node = None
+            for node in nodes:
+                # Head node has this resource
+                if node.get('Resources', {}).get('node:__internal_head__', 0) == 1.0:
+                    head_node = node
+                    break
+            
+            if head_node:
+                head_node_ip = head_node.get('NodeManagerAddress', '127.0.0.1')
+                ray_port = 6379  # Default Ray port
+                ray_address = f"{head_node_ip}:{ray_port}"
+                print(f"✅ Detected head node at {ray_address}")
+                # Shutdown the auto connection
+                ray.shutdown()
+            else:
+                # Fallback: use current node IP
+                import socket
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
+                ray_address = f"{local_ip}:6379"
+                print(f"⚠️  Could not detect head node, using local IP: {ray_address}")
+        except Exception as detect_err:
+            # Fallback: use localhost or detect from environment
+            import socket
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+            ray_address = f"{local_ip}:6379"
+            print(f"⚠️  Auto-detection failed ({detect_err}), using local IP: {ray_address}")
+    
+    # Now connect to the detected/explicit address
     try:
-        ray.init(address=args.address, ignore_reinit_error=True)
-        print(f"✅ Connected to Ray cluster")
+        ray.init(address=ray_address, ignore_reinit_error=True)
+        print(f"✅ Connected to Ray cluster at {ray_address}")
     except Exception as e:
-        print(f"❌ Failed to connect to Ray cluster: {e}")
+        print(f"❌ Failed to connect to Ray cluster at {ray_address}: {e}")
+        print(f"   Make sure Ray is running and the address is correct")
         sys.exit(1)
     
     # Check for diffusers

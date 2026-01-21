@@ -80,7 +80,6 @@ def create_deployment(model_name: str, model_path: str):
             self.model_loaded = False
             self.pipeline = None  # Main text-to-image pipeline
             self.img2img_pipeline = None  # Image-to-image pipeline
-            self.inpaint_pipeline = None  # Inpainting pipeline
             self.model_name = model_name
             self.model_path = model_path
             self.schema = None  # Will be populated after model loads
@@ -126,8 +125,7 @@ def create_deployment(model_name: str, model_path: str):
                     from diffusers import (
                         Kandinsky3Pipeline, 
                         AutoPipelineForText2Image,
-                        AutoPipelineForImage2Image,
-                        AutoPipelineForInpainting
+                        AutoPipelineForImage2Image
                     )
                     
                     self.loading_started = True
@@ -190,42 +188,6 @@ def create_deployment(model_name: str, model_path: str):
                             print("   ⚠️  Image-to-image will not be available (memory constraints)")
                             self.img2img_pipeline = None
                     
-                    # For inpainting, Kandinsky 3 has a separate inpainting model
-                    # Load it directly instead of trying to create from base pipeline
-                    print("   Checking inpainting capability...")
-                    if hasattr(self.pipeline, 'inpaint'):
-                        print("   ✅ Base pipeline supports inpaint method (reusing base pipeline)")
-                        self.inpaint_pipeline = self.pipeline  # Reuse base pipeline to save memory
-                    else:
-                        # Try loading the separate Kandinsky 3 inpainting model
-                        # This is a separate fine-tuned model, not created from base
-                        inpainting_model_path = model_path.replace("/kandinsky-3", "/kandinsky-3-inpainting")
-                        if inpainting_model_path == model_path:
-                            # If model_path doesn't contain "/kandinsky-3", try appending "-inpainting"
-                            inpainting_model_path = f"{model_path}-inpainting"
-                        
-                        try:
-                            print(f"   Attempting to load separate inpainting model: {inpainting_model_path}")
-                            self.inpaint_pipeline = AutoPipelineForInpainting.from_pretrained(
-                                inpainting_model_path,
-                                variant="fp16",
-                                torch_dtype=torch.float16
-                            )
-                            print(f"   ✅ Loaded separate inpainting model: {inpainting_model_path}")
-                        except Exception as inpaint_err:
-                            print(f"   ⚠️  Cannot load inpainting model from {inpainting_model_path}: {inpaint_err}")
-                            # Fallback: try creating from base pipeline (might not work for Kandinsky 3)
-                            try:
-                                print("   Attempting fallback: create inpainting from base components...")
-                                self.inpaint_pipeline = AutoPipelineForInpainting.from_pipe(
-                                    self.pipeline,
-                                    torch_dtype=torch.float16
-                                )
-                                print("   ✅ Created inpainting pipeline from base (shares components)")
-                            except Exception as fallback_err:
-                                print(f"   ⚠️  Fallback also failed: {fallback_err}")
-                                print("   ⚠️  Inpainting will not be available")
-                                self.inpaint_pipeline = None
                     
                     # Use CPU offloading instead of moving everything to GPU
                     # This saves memory by moving components to CPU when not in use
@@ -265,27 +227,6 @@ def create_deployment(model_name: str, model_path: str):
                                 else:
                                     raise
                     
-                    # Handle inpainting pipeline
-                    if self.inpaint_pipeline is not None:
-                        if self.inpaint_pipeline is self.pipeline or self.inpaint_pipeline is self.img2img_pipeline:
-                            print("   ✅ inpainting uses shared pipeline (CPU offloading already enabled)")
-                        elif hasattr(self.inpaint_pipeline, 'enable_model_cpu_offload'):
-                            print("   Enabling CPU offloading on inpainting pipeline...")
-                            self.inpaint_pipeline.enable_model_cpu_offload()
-                            print("   ✅ CPU offloading enabled on inpainting pipeline")
-                        elif hasattr(self.inpaint_pipeline, 'to'):
-                            print("   ⚠️  Moving inpainting to GPU (may cause OOM if separate pipeline)...")
-                            try:
-                                import torch
-                                self.inpaint_pipeline = self.inpaint_pipeline.to("cuda")
-                                print("   ✅ inpainting pipeline moved to GPU")
-                            except RuntimeError as oom_err:
-                                if "out of memory" in str(oom_err).lower() or "OOM" in str(oom_err):
-                                    print(f"   ❌ Out of memory loading inpainting: {oom_err}")
-                                    print("   ⚠️  Inpainting will not be available")
-                                    self.inpaint_pipeline = None
-                                else:
-                                    raise
                     
                     # Verify GPU usage
                     try:
@@ -305,8 +246,7 @@ def create_deployment(model_name: str, model_path: str):
                     
                     # Enable attention slicing on all pipelines (saves memory)
                     for name, pipeline in [("text-to-image", self.pipeline), 
-                                          ("image-to-image", self.img2img_pipeline),
-                                          ("inpainting", self.inpaint_pipeline)]:
+                                          ("image-to-image", self.img2img_pipeline)]:
                         if pipeline is not None and hasattr(pipeline, 'enable_attention_slicing'):
                             pipeline.enable_attention_slicing()
                             print(f"   ✅ Attention slicing enabled on {name} pipeline")
@@ -323,8 +263,6 @@ def create_deployment(model_name: str, model_path: str):
                         capabilities.append("text-to-image")
                     if self.img2img_pipeline is not None:
                         capabilities.append("image-to-image")
-                    if self.inpaint_pipeline is not None:
-                        capabilities.append("inpainting")
                     print(f"   Available capabilities: {', '.join(capabilities)}")
                     
                     self.model_loaded = True
@@ -380,25 +318,6 @@ def create_deployment(model_name: str, model_path: str):
                     try:
                         sig = inspect.signature(pipeline_to_check.__call__)
                         schema["methods"]["image_to_image"] = self._parse_signature(sig)
-                    except:
-                        pass
-            
-            if self.inpaint_pipeline is not None:
-                schema["capabilities"].append("inpainting")
-                schema["available_pipelines"]["inpainting"] = type(self.inpaint_pipeline).__name__
-                # Try to get inpaint method signature
-                pipeline_to_check = self.inpaint_pipeline
-                if hasattr(pipeline_to_check, 'inpaint'):
-                    try:
-                        sig = inspect.signature(pipeline_to_check.inpaint)
-                        schema["methods"]["inpaint"] = self._parse_signature(sig)
-                    except:
-                        pass
-                elif hasattr(pipeline_to_check, '__call__'):
-                    # If no inpaint method, check __call__ signature
-                    try:
-                        sig = inspect.signature(pipeline_to_check.__call__)
-                        schema["methods"]["inpaint"] = self._parse_signature(sig)
                     except:
                         pass
             
@@ -517,29 +436,6 @@ def create_deployment(model_name: str, model_path: str):
                         }
                     )
                 return await self.handle_image_to_image(request)
-            elif path.endswith("/inpaint") or path.endswith("/inpainting"):
-                # Quick readiness check for inpainting
-                if not (hasattr(self, 'model_loaded') and self.model_loaded and 
-                        hasattr(self, 'inpaint_pipeline') and self.inpaint_pipeline is not None):
-                    return JSONResponse(
-                        {
-                            "status": "scaling_up",
-                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60 seconds.",
-                            "model": getattr(self, 'model_name', 'unknown'),
-                            "estimated_ready_time_seconds": 60,
-                            "retry_after": 60,
-                            "poll_url": str(request.url),
-                            "action": "retry_later"
-                        },
-                        status_code=202,
-                        headers={
-                            "Retry-After": "60",
-                            "X-Status": "scaling-up",
-                            "X-Action": "retry-later",
-                            "Content-Type": "application/json"
-                        }
-                    )
-                return await self.handle_inpaint(request)
             elif path.endswith("/schema"):
                 return await self.handle_schema(request)
             elif path.endswith("/models"):
@@ -809,128 +705,6 @@ def create_deployment(model_name: str, model_path: str):
                     "status": "success",
                     "model": self.model_name,
                     "capability": "image-to-image",
-                    "image": image_data,
-                    "parameters": pipeline_kwargs,
-                    "compute_metrics": compute_metrics
-                })
-            except Exception as e:
-                return JSONResponse(
-                    {"error": str(e)},
-                    status_code=500
-                )
-        
-        async def handle_inpaint(self, request: Request) -> Any:
-            """Handle inpainting requests"""
-            try:
-                # Check if model is ready
-                model_ready = (
-                    hasattr(self, 'model_loaded') and 
-                    self.model_loaded and 
-                    hasattr(self, 'inpaint_pipeline') and 
-                    self.inpaint_pipeline is not None
-                )
-                
-                if not model_ready:
-                    return JSONResponse(
-                        {
-                            "status": "scaling_up",
-                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60 seconds.",
-                            "model": self.model_name,
-                            "estimated_ready_time_seconds": 60,
-                            "retry_after": 60,
-                            "poll_url": str(request.url),
-                            "action": "retry_later"
-                        },
-                        status_code=202,
-                        headers={
-                            "Retry-After": "60",
-                            "X-Status": "scaling-up",
-                            "X-Action": "retry-later",
-                            "Content-Type": "application/json"
-                        }
-                    )
-                
-                query_start_time = time.time()
-                
-                # Get request data
-                data = await request.json()
-                
-                # Ensure we have required parameters
-                if "image" not in data:
-                    return JSONResponse(
-                        {"error": "Missing required parameter: 'image' (base64 encoded image data)"},
-                        status_code=400
-                    )
-                if "mask_image" not in data:
-                    return JSONResponse(
-                        {"error": "Missing required parameter: 'mask_image' (base64 encoded mask image data, white pixels = area to inpaint)"},
-                        status_code=400
-                    )
-                
-                # Build pipeline kwargs using the inpaint pipeline schema
-                # Temporarily switch schema discovery to inpaint pipeline
-                original_pipeline = self.pipeline
-                self.pipeline = self.inpaint_pipeline
-                try:
-                    # Discover inpaint schema if not already done
-                    inpaint_schema = self._discover_pipeline_schema()
-                    original_schema = self.schema
-                    self.schema = inpaint_schema
-                    pipeline_kwargs = self._build_pipeline_kwargs(data)
-                    self.schema = original_schema
-                finally:
-                    self.pipeline = original_pipeline
-                
-                # Ensure torch is available
-                try:
-                    import torch
-                except ImportError:
-                    return JSONResponse(
-                        {"error": "PyTorch is not available. Please install torch."},
-                        status_code=500
-                    )
-                
-                # Generate image
-                with torch.inference_mode():
-                    # Use inpaint method if available, otherwise use __call__ with image and mask_image parameters
-                    if hasattr(self.inpaint_pipeline, 'inpaint'):
-                        result = self.inpaint_pipeline.inpaint(**pipeline_kwargs)
-                    else:
-                        result = self.inpaint_pipeline(**pipeline_kwargs)
-                
-                # Handle diffusers pipeline return format
-                if hasattr(result, 'images'):
-                    image = result.images[0]
-                else:
-                    raise ValueError(f"Unexpected result type from pipeline: {type(result)}")
-                
-                query_end_time = time.time()
-                query_duration = query_end_time - query_start_time
-                metrics_end = self._get_resource_metrics()
-                
-                # Convert image to base64
-                from PIL import Image
-                buffered = io.BytesIO()
-                image.save(buffered, format="PNG")
-                img_base64 = base64.b64encode(buffered.getvalue()).decode()
-                image_data = f"data:image/png;base64,{img_base64}"
-                
-                compute_metrics = {
-                    "query_duration_seconds": round(query_duration, 3),
-                    "replica_cpu_percent": metrics_end.get("cpu_percent", 0),
-                    "replica_memory_mb": metrics_end.get("memory_mb", 0),
-                    "replica_num_cpus": metrics_end.get("num_cpus", 1),
-                    "replica_gpu_memory_allocated_mb": metrics_end.get("gpu_memory_allocated_mb", 0),
-                    "replica_gpu_memory_reserved_mb": metrics_end.get("gpu_memory_reserved_mb", 0),
-                    "replica_gpu_memory_total_mb": metrics_end.get("gpu_memory_total_mb", 0),
-                    "replica_gpu_memory_used_mb": metrics_end.get("gpu_memory_used_mb", metrics_end.get("gpu_memory_allocated_mb", 0)),
-                    "replica_gpu_utilization_percent": metrics_end.get("gpu_utilization_percent", 0),
-                }
-                
-                return JSONResponse({
-                    "status": "success",
-                    "model": self.model_name,
-                    "capability": "inpainting",
                     "image": image_data,
                     "parameters": pipeline_kwargs,
                     "compute_metrics": compute_metrics
