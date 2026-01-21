@@ -50,7 +50,7 @@ def create_deployment(model_name: str, model_path: str):
                     # ML/AI framework dependencies
                     "torch>=2.0.0",
                     "torchvision>=0.15.0",
-                    "diffusers>=0.21.0",
+                    "diffusers>=0.24.0",  # Kandinsky 3 requires 0.24.0+
                     "accelerate>=0.20.0",
                     "transformers>=4.30.0",
                     # Image processing
@@ -88,7 +88,7 @@ def create_deployment(model_name: str, model_path: str):
             # Don't delete and re-import - this causes Triton library registration conflicts
             try:
                 import torch
-                from diffusers import Kandinsky3Pipeline
+                from diffusers import AutoPipelineForText2Image
                 print("✅ PyTorch and Diffusers available")
             except ImportError as import_err:
                 print(f"⚠️  PyTorch/Diffusers not available: {import_err}")
@@ -99,7 +99,7 @@ def create_deployment(model_name: str, model_path: str):
                     print(f"   Using Python: {replica_python}")
                     result = subprocess.run(
                         [replica_python, "-m", "pip", "install", 
-                         "diffusers>=0.21.0", "accelerate>=0.20.0", "torchvision>=0.15.0"],
+                         "diffusers>=0.24.0", "accelerate>=0.20.0", "torchvision>=0.15.0"],
                         timeout=600,
                         capture_output=True,
                         text=True
@@ -109,7 +109,7 @@ def create_deployment(model_name: str, model_path: str):
                     
                     # Import after installation (don't delete from sys.modules - causes Triton conflicts)
                     import torch
-                    from diffusers import Kandinsky3Pipeline
+                    from diffusers import AutoPipelineForText2Image
                     print("✅ Installed and imported PyTorch/Diffusers")
                 except Exception as install_err:
                     print(f"❌ Installation failed: {install_err}")
@@ -120,19 +120,32 @@ def create_deployment(model_name: str, model_path: str):
                 try:
                     # Import torch in the function scope to avoid UnboundLocalError
                     import torch
-                    from diffusers import Kandinsky3Pipeline
+                    from diffusers import AutoPipelineForText2Image
                     
                     self.loading_started = True
                     print(f"🚀 Loading Kandinsky 3 model in background: {model_name}")
                     print(f"   HuggingFace Model ID: {model_path}")
                     
-                    # Load from HuggingFace using diffusers (model_path is always a HuggingFace model ID)
+                    # Load from HuggingFace using AutoPipelineForText2Image (more reliable for Kandinsky 3)
+                    # This automatically detects the correct pipeline class and handles model structure
                     print(f"   Loading from HuggingFace: {model_path}")
-                    self.pipeline = Kandinsky3Pipeline.from_pretrained(
-                        model_path,
-                        torch_dtype=torch.float16,
-                        use_safetensors=False  # Allow loading from pickle files if safetensors not available
-                    )
+                    try:
+                        # Try with variant="fp16" first (recommended for Kandinsky 3)
+                        self.pipeline = AutoPipelineForText2Image.from_pretrained(
+                            model_path,
+                            variant="fp16",
+                            torch_dtype=torch.float16
+                        )
+                        print("   ✅ Loaded with fp16 variant")
+                    except Exception as variant_err:
+                        print(f"   ⚠️  Failed to load with fp16 variant: {variant_err}")
+                        print("   Trying without variant parameter...")
+                        # Fallback: try without variant
+                        self.pipeline = AutoPipelineForText2Image.from_pretrained(
+                            model_path,
+                            torch_dtype=torch.float16
+                        )
+                        print("   ✅ Loaded without variant parameter")
                     
                     # Move to GPU
                     if hasattr(self.pipeline, 'to'):
