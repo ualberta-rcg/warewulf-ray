@@ -74,9 +74,6 @@ def create_deployment(model_name: str, model_path: str):
         """Kandinsky endpoint with autoscaling and dynamic input discovery"""
         
         def __init__(self, model_name: str = model_name, model_path: str = model_path):
-            import sys
-            import subprocess
-            
             self.model_loaded = False
             self.pipeline = None  # Main text-to-image pipeline
             self.img2img_pipeline = None  # Image-to-image pipeline

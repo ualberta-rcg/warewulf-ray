@@ -38,7 +38,7 @@ except ImportError as e:
 # Removed find_models function - no longer needed since we only use HuggingFace models
 
 
-def deploy_kandinsky(model_name: str, model_path: str, app_name: str = None):
+def deploy_kandinsky(model_name: str, model_path: str, app_name: str = None, serve_port: int = 9201):
     """Deploy Kandinsky endpoint with separate application"""
     
     print(f"🚀 Deploying Kandinsky endpoint...")
@@ -63,10 +63,10 @@ def deploy_kandinsky(model_name: str, model_path: str, app_name: str = None):
     
     print(f"✅ Kandinsky endpoint deployed successfully!")
     print(f"   Application: {app_name}")
-    print(f"   API: http://<head-node-ip>:8000/{app_name}/v1")
+    print(f"   API: http://<head-node-ip>:{serve_port}/{app_name}/v1")
     print(f"   Model ID: {model_path}")
     print(f"   Autoscaling: Scale to zero enabled (5 min idle timeout)")
-    print(f"   Schema endpoint: http://<head-node-ip>:8000/{app_name}/v1/schema")
+    print(f"   Schema endpoint: http://<head-node-ip>:{serve_port}/{app_name}/v1/schema")
 
 
 def main():
@@ -82,6 +82,12 @@ def main():
         type=str,
         default="auto",
         help="Ray cluster address (default: auto - detects head node)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=9201,
+        help="Ray Serve HTTP port (default: 9201)",
     )
     
     args = parser.parse_args()
@@ -149,25 +155,25 @@ def main():
     
     # Start Ray Serve with HTTP options to listen on all interfaces (0.0.0.0)
     # This ensures it's accessible from other machines, not just localhost
-    RAY_SERVE_PORT = 8000  # Default Ray Serve port
+    RAY_SERVE_PORT = args.port  # Use port from command line argument
     RAY_SERVE_HOST = "0.0.0.0"  # Listen on all interfaces
     
     try:
         from ray.serve.config import HTTPOptions
-        http_options = HTTPOptions(host=RAY_SERVE_HOST, port=RAY_SERVE_PORT)
         
         # Always shutdown and restart to ensure correct host configuration
         # This is important because Ray Serve might have been started with 127.0.0.1
         try:
             status = serve.status()
-            print(f"🔄 Ray Serve is already running, restarting to ensure host={RAY_SERVE_HOST}...")
+            print(f"🔄 Ray Serve is already running, shutting down to reconfigure...")
             serve.shutdown()
-            time.sleep(2)
+            time.sleep(3)  # Give it more time to fully shutdown
         except:
             # Serve not running, that's fine
             pass
         
         # Start with correct host (0.0.0.0 to listen on all interfaces)
+        http_options = HTTPOptions(host=RAY_SERVE_HOST, port=RAY_SERVE_PORT)
         serve.start(detached=True, http_options=http_options)
         print(f"✅ Ray Serve started on {RAY_SERVE_HOST}:{RAY_SERVE_PORT} (accessible from network)")
         
@@ -175,8 +181,13 @@ def main():
         try:
             status = serve.status()
             print(f"   Ray Serve status: {status}")
-        except:
-            pass
+            # Try to get the actual proxy address
+            if hasattr(status, 'proxies') and status.proxies:
+                for proxy_id, proxy_info in status.proxies.items():
+                    if hasattr(proxy_info, 'node_id'):
+                        print(f"   Proxy running on node: {proxy_info.node_id}")
+        except Exception as status_err:
+            print(f"   Could not get detailed status: {status_err}")
             
     except Exception as e:
         print(f"❌ Ray Serve setup failed: {e}")
@@ -197,7 +208,8 @@ def main():
         deploy_kandinsky(
             model_name=model_name,
             model_path=model_id,  # Pass model ID as model_path (it will be treated as HuggingFace ID)
-            app_name=args.app_name
+            app_name=args.app_name,
+            serve_port=RAY_SERVE_PORT
         )
         deploy_time = time.time() - deploy_start
         
