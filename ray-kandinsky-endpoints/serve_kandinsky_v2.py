@@ -17,11 +17,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from ray import serve
 
-# Add kandinsky3 repo to path if it exists
-KANDINSKY3_REPO_PATH = os.environ.get("KANDINSKY3_PATH", "/data/models/kandinsky3")
-if os.path.exists(KANDINSKY3_REPO_PATH) and KANDINSKY3_REPO_PATH not in sys.path:
-    sys.path.insert(0, KANDINSKY3_REPO_PATH)
-
 # Note: We don't import torch/diffusers at module level to avoid Triton library registration conflicts
 # All imports happen inside the replica's __init__ method where they're needed
 # This prevents issues when Ray creates multiple replicas in the same process
@@ -60,7 +55,6 @@ def create_deployment(model_name: str, model_path: str):
                     "transformers>=4.30.0",
                     # Image processing
                     "pillow>=9.0.0",
-                    "scikit-image>=0.19.0",  # Provides 'skimage' module
                     # Web framework
                     "fastapi>=0.100.0",
                     "starlette>=0.27.0",  # FastAPI dependency
@@ -68,22 +62,10 @@ def create_deployment(model_name: str, model_path: str):
                     # System utilities
                     "psutil>=5.9.0",
                     "nvidia-ml-py>=12.0.0",  # GPU monitoring
-                    # Essential kandinsky3 dependencies (from requirements.txt)
-                    "omegaconf>=2.1.0",
-                    "einops>=0.6.0",
-                    "scipy>=1.9.0",
-                    "matplotlib>=3.5.0",
-                    "timm>=0.6.0",
-                    "datasets>=2.0.0",
-                    "fsspec>=2023.5.0",
-                    "hydra-core>=1.2.0",
-                    "albumentations>=1.3.0",
                     # Note: bezier is installed manually with --no-build-isolation in __init__
-                    # Note: pytorch_lightning, webdataset, s3fs, wandb are optional for inference
                 ],
                 "env_vars": {
                     "HF_HOME": "/data/models",
-                    "KANDINSKY3_PATH": "/data/models/kandinsky3",  # Path where we'll clone the repo
                 }
             }
         }
@@ -99,13 +81,11 @@ def create_deployment(model_name: str, model_path: str):
             self.pipeline = None
             self.model_name = model_name
             self.model_path = model_path
-            self.is_v3 = False
             self.schema = None  # Will be populated after model loads
             self.loading_error = None  # Store loading errors for API responses
             self.loading_started = False  # Track if loading has started
-            self._pipeline_needs_to_cuda = True  # Flag to check if pipeline needs .to("cuda")
             
-            # Install bezier with --no-build-isolation (required for proper build)
+            # Install bezier with --no-build-isolation and BEZIER_INSTALL_PREFIX (required for proper build)
             try:
                 import bezier
                 print("✅ bezier already available")
@@ -113,8 +93,15 @@ def create_deployment(model_name: str, model_path: str):
                 print("⚠️  bezier not available. Installing with --no-build-isolation...")
                 try:
                     replica_python = sys.executable
+                    # Set BEZIER_INSTALL_PREFIX to a temporary directory
+                    import tempfile
+                    bezier_prefix = tempfile.mkdtemp(prefix="bezier_install_")
+                    env = os.environ.copy()
+                    env["BEZIER_INSTALL_PREFIX"] = bezier_prefix
+                    
                     result = subprocess.run(
                         [replica_python, "-m", "pip", "install", "--no-build-isolation", "bezier>=2021.2.12"],
+                        env=env,
                         timeout=300,
                         capture_output=True,
                         text=True
@@ -142,7 +129,7 @@ def create_deployment(model_name: str, model_path: str):
             # Don't delete and re-import - this causes Triton library registration conflicts
             try:
                 import torch
-                from diffusers import KandinskyV22Pipeline
+                from diffusers import Kandinsky3Pipeline
                 print("✅ PyTorch and Diffusers available")
             except ImportError as import_err:
                 print(f"⚠️  PyTorch/Diffusers not available: {import_err}")
@@ -163,284 +150,37 @@ def create_deployment(model_name: str, model_path: str):
                     
                     # Import after installation (don't delete from sys.modules - causes Triton conflicts)
                     import torch
-                    from diffusers import KandinskyV22Pipeline
+                    from diffusers import Kandinsky3Pipeline
                     print("✅ Installed and imported PyTorch/Diffusers")
                 except Exception as install_err:
                     print(f"❌ Installation failed: {install_err}")
                     raise ImportError(f"PyTorch/Diffusers not available and installation failed: {install_err}")
-            
-            # Check for Kandinsky 3 availability
-            try:
-                from diffusers import Kandinsky3Pipeline
-                print("✅ Kandinsky 3 available in diffusers")
-            except ImportError:
-                print("⚠️  Kandinsky 3 not available in diffusers (will try custom package)")
-            
-            # Try to setup kandinsky3 from GitHub if needed
-            # The repo doesn't have setup.py, so we need to clone it and add to path
-            try:
-                kandinsky3_path = os.environ.get("KANDINSKY3_PATH", "/data/models/kandinsky3")
-                print(f"   Setting up kandinsky3 from GitHub to: {kandinsky3_path}")
-                
-                # Check if path is accessible
-                if not os.path.exists(kandinsky3_path):
-                    print(f"   ⚠️  Path does not exist: {kandinsky3_path}")
-                    print("   Creating directory and cloning repository...")
-                    # Create parent directory if needed
-                    parent_dir = os.path.dirname(kandinsky3_path)
-                    if parent_dir:
-                        os.makedirs(parent_dir, exist_ok=True)
-                    
-                    # Clone the repository
-                    result2 = subprocess.run(
-                        ["git", "clone", "https://github.com/ai-forever/Kandinsky-3.git", kandinsky3_path],
-                        timeout=300,
-                        capture_output=True,
-                        text=True
-                    )
-                    if result2.returncode != 0:
-                        print(f"   ⚠️  git clone failed: {result2.stderr}")
-                        print("   Note: You can manually clone with:")
-                        print(f"   git clone https://github.com/ai-forever/Kandinsky-3.git {kandinsky3_path}")
-                        raise RuntimeError(f"Failed to clone kandinsky3 repo: {result2.stderr}")
-                    else:
-                        print("   ✅ Cloned Kandinsky-3 repository")
-                
-                # Check if repository exists and is accessible
-                kandinsky3_module_path = os.path.join(kandinsky3_path, "kandinsky3")
-                print(f"   Checking module path: {kandinsky3_module_path}")
-                print(f"   Path exists: {os.path.exists(kandinsky3_path)}")
-                print(f"   Module exists: {os.path.exists(kandinsky3_module_path)}")
-                
-                if not os.path.exists(kandinsky3_module_path):
-                    print(f"   ⚠️  kandinsky3 module not found at: {kandinsky3_module_path}")
-                    print(f"   Listing directory contents of {kandinsky3_path}:")
-                    try:
-                        if os.path.exists(kandinsky3_path):
-                            for item in os.listdir(kandinsky3_path):
-                                item_path = os.path.join(kandinsky3_path, item)
-                                print(f"     - {item} ({'dir' if os.path.isdir(item_path) else 'file'})")
-                    except Exception as list_err:
-                        print(f"     Could not list directory: {list_err}")
-                    raise RuntimeError(f"kandinsky3 module not found at {kandinsky3_module_path}")
-                
-                # Add to Python path
-                if kandinsky3_path not in sys.path:
-                    sys.path.insert(0, kandinsky3_path)
-                    print(f"   ✅ Added {kandinsky3_path} to sys.path")
-                
-                # Try to install requirements from the repo in the replica's environment
-                # Use the current Python interpreter (replica's Python), not head node's
-                # Note: bezier is installed separately with --no-build-isolation, so we skip it here
-                requirements_file = os.path.join(kandinsky3_path, "requirements.txt")
-                if os.path.exists(requirements_file):
-                    print(f"   Installing kandinsky3 requirements from: {requirements_file}")
-                    print(f"   Using Python: {sys.executable}")
-                    print(f"   Note: bezier will be skipped (already installed with --no-build-isolation)")
-                    try:
-                        replica_python = sys.executable
-                        # Create a temporary requirements file without bezier
-                        import tempfile
-                        with open(requirements_file, 'r') as f:
-                            requirements = f.readlines()
-                        
-                        # Filter out bezier lines
-                        filtered_requirements = [
-                            line for line in requirements 
-                            if not line.strip().startswith('bezier') and 'bezier' not in line.lower()
-                        ]
-                        
-                        if filtered_requirements != requirements:
-                            # Use filtered requirements
-                            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp_file:
-                                tmp_file.writelines(filtered_requirements)
-                                tmp_requirements_file = tmp_file.name
-                            
-                            try:
-                                result3 = subprocess.run(
-                                    [replica_python, "-m", "pip", "install", "-r", tmp_requirements_file],
-                                    timeout=600,
-                                    capture_output=True,
-                                    text=True
-                                )
-                                if result3.returncode == 0:
-                                    print("   ✅ Installed kandinsky3 requirements in replica (bezier skipped)")
-                                else:
-                                    print(f"   ⚠️  Some requirements may have failed (return code: {result3.returncode})")
-                                    if result3.stderr:
-                                        print(f"   stderr: {result3.stderr[:500]}")
-                                    if result3.stdout:
-                                        print(f"   stdout: {result3.stdout[:500]}")
-                            finally:
-                                # Clean up temp file
-                                try:
-                                    os.unlink(tmp_requirements_file)
-                                except:
-                                    pass
-                        else:
-                            # No bezier in requirements, install normally
-                            result3 = subprocess.run(
-                                [replica_python, "-m", "pip", "install", "-r", requirements_file],
-                                timeout=600,
-                                capture_output=True,
-                                text=True
-                            )
-                            if result3.returncode == 0:
-                                print("   ✅ Installed kandinsky3 requirements in replica")
-                            else:
-                                print(f"   ⚠️  Some requirements may have failed (return code: {result3.returncode})")
-                                if result3.stderr:
-                                    print(f"   stderr: {result3.stderr[:500]}")
-                                if result3.stdout:
-                                    print(f"   stdout: {result3.stdout[:500]}")
-                    except Exception as req_err:
-                        print(f"   ⚠️  Could not install requirements: {req_err}")
-                        import traceback
-                        traceback.print_exc()
-                else:
-                    print(f"   ⚠️  requirements.txt not found at: {requirements_file}")
-                
-                # Try to import
-                print(f"   Attempting to import kandinsky3 from: {kandinsky3_module_path}")
-                print(f"   sys.path contains kandinsky3_path: {kandinsky3_path in sys.path}")
-                try:
-                    from kandinsky3 import get_T2I_pipeline
-                    print("✅ Kandinsky 3 package available from GitHub")
-                except ImportError as import_err:
-                    print(f"⚠️  kandinsky3 import failed: {import_err}")
-                    print(f"   Module path: {kandinsky3_module_path}")
-                    print(f"   Path exists: {os.path.exists(kandinsky3_module_path)}")
-                    print(f"   sys.path: {sys.path[:5]}...")  # First 5 entries
-                    import traceback
-                    traceback.print_exc()
-                    # Don't raise - kandinsky3 might not be needed if using diffusers version
-            except Exception as e:
-                print(f"⚠️  kandinsky3 setup failed: {e}")
-                import traceback
-                traceback.print_exc()
-                print("   Note: You can manually clone with:")
-                print("   git clone https://github.com/ai-forever/Kandinsky-3.git /data/models/kandinsky3")
-                # Don't raise - continue even if kandinsky3 setup fails
             
             # Load model in background thread
             def load_model():
                 try:
                     # Import torch in the function scope to avoid UnboundLocalError
                     import torch
+                    from diffusers import Kandinsky3Pipeline
                     
                     self.loading_started = True
-                    print(f"🚀 Loading Kandinsky model in background: {model_name}")
+                    print(f"🚀 Loading Kandinsky 3 model in background: {model_name}")
                     print(f"   HuggingFace Model ID: {model_path}")
                     
-                    # Detect if it's V3 or V2.2 based on model ID
-                    model_lower = model_path.lower() if model_path else ""
-                    is_v3_requested = "kandinsky3" in model_lower or "v3" in model_lower or "3.1" in model_lower
+                    # Load from HuggingFace using diffusers (model_path is always a HuggingFace model ID)
+                    print(f"   Loading from HuggingFace: {model_path}")
+                    self.pipeline = Kandinsky3Pipeline.from_pretrained(
+                        model_path,
+                        torch_dtype=torch.float16
+                    )
                     
-                    # Check availability dynamically (since we can't update globals in nested function)
-                    import sys
-                    try:
-                        from diffusers import Kandinsky3Pipeline
-                        kandinsky_v3_diffusers_available = True
-                    except ImportError:
-                        kandinsky_v3_diffusers_available = False
-                    
-                    # Try to import kandinsky3 (may need to add path first)
-                    kandinsky_v3_custom_available = False
-                    try:
-                        # Try importing directly first
-                        from kandinsky3 import get_T2I_pipeline
-                        kandinsky_v3_custom_available = True
-                    except ImportError:
-                        # Try adding the path from environment variable
-                        kandinsky3_path = os.environ.get("KANDINSKY3_PATH", "/data/models/kandinsky3")
-                        if kandinsky3_path not in sys.path and os.path.exists(kandinsky3_path):
-                            sys.path.insert(0, kandinsky3_path)
-                        try:
-                            from kandinsky3 import get_T2I_pipeline
-                            kandinsky_v3_custom_available = True
-                        except ImportError:
-                            kandinsky_v3_custom_available = False
-                    
-                    kandinsky_v3_available = kandinsky_v3_diffusers_available or kandinsky_v3_custom_available
-                    is_v3 = is_v3_requested and kandinsky_v3_available
-                    
-                    if is_v3_requested and not kandinsky_v3_available:
-                        print("⚠️  Kandinsky V3 requested but not available")
-                        print("   Falling back to Kandinsky V2.2")
-                        is_v3 = False
-                    
-                    # Load from HuggingFace (model_path is always a HuggingFace model ID now)
-                    if is_v3 and kandinsky_v3_custom_available:
-                        # Use custom kandinsky3 package for V3
-                        print("   Using custom kandinsky3 package for Kandinsky V3")
-                        try:
-                            from kandinsky3 import get_T2I_pipeline
-                            
-                            # Set up device and dtype map
-                            device_map = torch.device('cuda:0')
-                            dtype_map = {
-                                'unet': torch.float32,
-                                'text_encoder': torch.float16,
-                                'movq': torch.float32,
-                            }
-                            
-                            # Note: get_T2I_pipeline loads from HuggingFace by default
-                            # It uses ai-forever/Kandinsky3.1, but we can't specify a different model
-                            print(f"   Loading from HuggingFace: {model_path}")
-                            print("   (Note: kandinsky3 package loads ai-forever/Kandinsky3.1 by default)")
-                            self.pipeline = get_T2I_pipeline(device_map, dtype_map)
-                            self.is_v3 = True
-                            print("   ✅ Loaded Kandinsky 3 using custom package")
-                        except Exception as e:
-                            print(f"   ⚠️  Failed to load with custom kandinsky3 package: {e}")
-                            if kandinsky_v3_diffusers_available:
-                                print("   Trying diffusers Kandinsky3Pipeline as fallback...")
-                                try:
-                                    from diffusers import Kandinsky3Pipeline
-                                    print(f"   Loading from HuggingFace: {model_path}")
-                                    self.pipeline = Kandinsky3Pipeline.from_pretrained(
-                                        model_path,
-                                        torch_dtype=torch.float16
-                                    )
-                                    self.is_v3 = True
-                                    print("   ✅ Loaded Kandinsky 3 using diffusers")
-                                except Exception as e2:
-                                    raise RuntimeError(f"Failed to load Kandinsky 3: {e2}")
-                            else:
-                                raise RuntimeError(f"Failed to load Kandinsky 3: {e}")
-                    elif is_v3 and kandinsky_v3_diffusers_available:
-                        # Use diffusers for V3
-                        print("   Using diffusers Kandinsky3Pipeline for V3")
-                        try:
-                            from diffusers import Kandinsky3Pipeline
-                            print(f"   Loading from HuggingFace: {model_path}")
-                            self.pipeline = Kandinsky3Pipeline.from_pretrained(
-                                model_path,
-                                torch_dtype=torch.float16
-                            )
-                            self.is_v3 = True
-                            print("   ✅ Loaded Kandinsky 3 using diffusers")
-                        except Exception as e:
-                            raise RuntimeError(f"Failed to load Kandinsky 3: {e}")
+                    # Move to GPU
+                    if hasattr(self.pipeline, 'to'):
+                        print("   Moving pipeline to GPU...")
+                        self.pipeline = self.pipeline.to("cuda")
+                        print("   ✅ Pipeline moved to GPU")
                     else:
-                        # Use V2.2
-                        print("   Using KandinskyV22Pipeline (V2.2)")
-                        print(f"   Loading from HuggingFace: {model_path}")
-                        self.pipeline = KandinskyV22Pipeline.from_pretrained(
-                            model_path,
-                            torch_dtype=torch.float16
-                        )
-                        self.is_v3 = False
-                        print("   ✅ Loaded Kandinsky V2.2")
-                    
-                    # Move to GPU (only for diffusers pipelines, kandinsky3 custom package is already on GPU)
-                    if self._pipeline_needs_to_cuda:
-                        if hasattr(self.pipeline, 'to'):
-                            print("   Moving pipeline to GPU...")
-                            self.pipeline = self.pipeline.to("cuda")
-                            print("   ✅ Pipeline moved to GPU")
-                        else:
-                            print("   ⚠️  Pipeline doesn't have .to() method (may already be on GPU)")
+                        print("   ⚠️  Pipeline doesn't have .to() method (may already be on GPU)")
                     
                     # Verify GPU usage
                     try:
@@ -706,18 +446,9 @@ def create_deployment(model_name: str, model_path: str):
                 with torch.inference_mode():
                     result = self.pipeline(**pipeline_kwargs)
                 
-                # Handle different return formats:
-                # - diffusers pipelines return object with .images attribute
-                # - kandinsky3 custom package returns list of images directly
+                # Handle diffusers pipeline return format (object with .images attribute)
                 if hasattr(result, 'images'):
-                    # Standard diffusers format
                     image = result.images[0]
-                elif isinstance(result, list):
-                    # kandinsky3 custom package returns list directly
-                    image = result[0]
-                elif hasattr(result, '__getitem__'):
-                    # Try to get first item if it's indexable
-                    image = result[0]
                 else:
                     raise ValueError(f"Unexpected result type from pipeline: {type(result)}")
                 
@@ -811,8 +542,8 @@ def create_deployment(model_name: str, model_path: str):
             
             # Map common parameter names to pipeline-specific names
             # kandinsky3 uses "text" instead of "prompt", "steps" instead of "num_inference_steps"
-            if "text" not in kwargs and "prompt" in data:
-                # Map "prompt" -> "text" for kandinsky3, or use "prompt" for other pipelines
+            if (kwargs.get("text") is None or "text" not in kwargs) and "prompt" in data:
+                # Map "prompt" -> "text" for kandinsky3
                 if "text" in all_inputs:
                     kwargs["text"] = data["prompt"]
                 elif "prompt" in all_inputs:
