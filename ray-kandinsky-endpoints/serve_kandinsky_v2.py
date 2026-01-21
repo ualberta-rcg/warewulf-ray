@@ -231,26 +231,68 @@ def create_deployment(model_name: str, model_path: str):
                 
                 # Try to install requirements from the repo in the replica's environment
                 # Use the current Python interpreter (replica's Python), not head node's
+                # Note: bezier is installed separately with --no-build-isolation, so we skip it here
                 requirements_file = os.path.join(kandinsky3_path, "requirements.txt")
                 if os.path.exists(requirements_file):
                     print(f"   Installing kandinsky3 requirements from: {requirements_file}")
                     print(f"   Using Python: {sys.executable}")
+                    print(f"   Note: bezier will be skipped (already installed with --no-build-isolation)")
                     try:
                         replica_python = sys.executable
-                        result3 = subprocess.run(
-                            [replica_python, "-m", "pip", "install", "-r", requirements_file],
-                            timeout=600,
-                            capture_output=True,
-                            text=True
-                        )
-                        if result3.returncode == 0:
-                            print("   ✅ Installed kandinsky3 requirements in replica")
+                        # Create a temporary requirements file without bezier
+                        import tempfile
+                        with open(requirements_file, 'r') as f:
+                            requirements = f.readlines()
+                        
+                        # Filter out bezier lines
+                        filtered_requirements = [
+                            line for line in requirements 
+                            if not line.strip().startswith('bezier') and 'bezier' not in line.lower()
+                        ]
+                        
+                        if filtered_requirements != requirements:
+                            # Use filtered requirements
+                            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tmp_file:
+                                tmp_file.writelines(filtered_requirements)
+                                tmp_requirements_file = tmp_file.name
+                            
+                            try:
+                                result3 = subprocess.run(
+                                    [replica_python, "-m", "pip", "install", "-r", tmp_requirements_file],
+                                    timeout=600,
+                                    capture_output=True,
+                                    text=True
+                                )
+                                if result3.returncode == 0:
+                                    print("   ✅ Installed kandinsky3 requirements in replica (bezier skipped)")
+                                else:
+                                    print(f"   ⚠️  Some requirements may have failed (return code: {result3.returncode})")
+                                    if result3.stderr:
+                                        print(f"   stderr: {result3.stderr[:500]}")
+                                    if result3.stdout:
+                                        print(f"   stdout: {result3.stdout[:500]}")
+                            finally:
+                                # Clean up temp file
+                                try:
+                                    os.unlink(tmp_requirements_file)
+                                except:
+                                    pass
                         else:
-                            print(f"   ⚠️  Some requirements may have failed (return code: {result3.returncode})")
-                            if result3.stderr:
-                                print(f"   stderr: {result3.stderr[:500]}")
-                            if result3.stdout:
-                                print(f"   stdout: {result3.stdout[:500]}")
+                            # No bezier in requirements, install normally
+                            result3 = subprocess.run(
+                                [replica_python, "-m", "pip", "install", "-r", requirements_file],
+                                timeout=600,
+                                capture_output=True,
+                                text=True
+                            )
+                            if result3.returncode == 0:
+                                print("   ✅ Installed kandinsky3 requirements in replica")
+                            else:
+                                print(f"   ⚠️  Some requirements may have failed (return code: {result3.returncode})")
+                                if result3.stderr:
+                                    print(f"   stderr: {result3.stderr[:500]}")
+                                if result3.stdout:
+                                    print(f"   stdout: {result3.stdout[:500]}")
                     except Exception as req_err:
                         print(f"   ⚠️  Could not install requirements: {req_err}")
                         import traceback
