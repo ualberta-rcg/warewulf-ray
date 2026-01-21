@@ -62,7 +62,6 @@ def create_deployment(model_name: str, model_path: str):
                     # System utilities
                     "psutil>=5.9.0",
                     "nvidia-ml-py>=12.0.0",  # GPU monitoring
-                    # Note: bezier is installed manually with --no-build-isolation in __init__
                 ],
                 "env_vars": {
                     "HF_HOME": "/data/models",
@@ -84,46 +83,6 @@ def create_deployment(model_name: str, model_path: str):
             self.schema = None  # Will be populated after model loads
             self.loading_error = None  # Store loading errors for API responses
             self.loading_started = False  # Track if loading has started
-            
-            # Install bezier with --no-build-isolation and BEZIER_INSTALL_PREFIX (required for proper build)
-            try:
-                import bezier
-                print("✅ bezier already available")
-            except ImportError:
-                print("⚠️  bezier not available. Installing with --no-build-isolation...")
-                try:
-                    replica_python = sys.executable
-                    # Set BEZIER_INSTALL_PREFIX to a temporary directory
-                    import tempfile
-                    bezier_prefix = tempfile.mkdtemp(prefix="bezier_install_")
-                    env = os.environ.copy()
-                    env["BEZIER_INSTALL_PREFIX"] = bezier_prefix
-                    
-                    result = subprocess.run(
-                        [replica_python, "-m", "pip", "install", "--no-build-isolation", "bezier>=2021.2.12"],
-                        env=env,
-                        timeout=300,
-                        capture_output=True,
-                        text=True
-                    )
-                    if result.returncode == 0:
-                        print("✅ bezier installed successfully with --no-build-isolation")
-                        # Reload module
-                        if 'bezier' in sys.modules:
-                            del sys.modules['bezier']
-                        import bezier
-                    else:
-                        print(f"⚠️  bezier installation failed (return code: {result.returncode})")
-                        if result.stderr:
-                            print(f"   stderr: {result.stderr[:500]}")
-                        if result.stdout:
-                            print(f"   stdout: {result.stdout[:500]}")
-                        raise RuntimeError(f"Failed to install bezier: {result.stderr}")
-                except Exception as bezier_err:
-                    print(f"⚠️  Could not install bezier: {bezier_err}")
-                    # Don't fail completely - bezier might not be critical for all models
-                    import traceback
-                    traceback.print_exc()
             
             # Import torch and diffusers (they're in runtime_env, so should be available)
             # Don't delete and re-import - this causes Triton library registration conflicts

@@ -86,8 +86,8 @@ def main():
     
     args = parser.parse_args()
     
-    # Always use Kandinsky 3.1 from HuggingFace
-    model_id = "ai-forever/Kandinsky3.1"
+    # Use Kandinsky 3 from HuggingFace (community version with proper diffusers structure)
+    model_id = "kandinsky-community/kandinsky-3"
     
     # Initialize Ray connection
     try:
@@ -130,8 +130,8 @@ def main():
         print(f"⚠️  Ray Serve setup issue: {e}")
         print(f"   Continuing anyway...")
     
-    # Always use Kandinsky 3.1
-    print(f"📦 Using Kandinsky 3.1 from HuggingFace: {model_id}")
+    # Use Kandinsky 3 (community version with proper diffusers structure)
+    print(f"📦 Using Kandinsky 3 from HuggingFace: {model_id}")
     print(f"   Model will be downloaded automatically on first use")
     
     # Get model name from app name or use default
@@ -164,7 +164,7 @@ def main():
             print(f"   # Generate image:")
             print(f"   curl -X POST http://{head_node_ip}:{RAY_SERVE_PORT}/{app_name}/v1/generate \\")
             print(f"     -H 'Content-Type: application/json' \\")
-            print(f"     -d '{{\"prompt\": \"a beautiful landscape\", \"num_inference_steps\": 50}}'")
+            print(f"     -d '{{\"text\": \"a beautiful landscape\", \"steps\": 50}}'")
         except:
             app_name = args.app_name or model_name
             print("\n📊 Deployment Summary:")
