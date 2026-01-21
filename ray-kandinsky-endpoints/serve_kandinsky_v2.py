@@ -75,20 +75,30 @@ def create_deployment(model_name: str, model_path: str):
             "num_gpus": 1,
             "runtime_env": {
                 "pip": [
+                    # Ray and core dependencies first (ensures venv has everything needed)
+                    "ray[serve]>=2.49.0",  # Includes Ray Serve and all core dependencies (packaging, setuptools, etc.)
+                    "setuptools>=65.0",  # Required for building packages
+                    "wheel>=0.38.0",  # Required for building packages
                     "packaging>=21.0",  # Required by Ray for runtime env verification
+                    # ML/AI framework dependencies
+                    "torch>=2.0.0",
+                    "torchvision>=0.15.0",
                     "diffusers>=0.21.0",
                     "accelerate>=0.20.0",
                     "transformers>=4.30.0",
-                    "torch>=2.0.0",
-                    "torchvision>=0.15.0",
+                    # Image processing
                     "pillow>=9.0.0",
+                    "scikit-image>=0.19.0",  # Provides 'skimage' module
+                    # Web framework
                     "fastapi>=0.100.0",
+                    "starlette>=0.27.0",  # FastAPI dependency
+                    "uvicorn>=0.23.0",  # ASGI server
+                    # System utilities
                     "psutil>=5.9.0",
-                    "nvidia-ml-py>=12.0.0",
+                    "nvidia-ml-py>=12.0.0",  # GPU monitoring
                     # Essential kandinsky3 dependencies (from requirements.txt)
                     "omegaconf>=2.1.0",
                     "einops>=0.6.0",
-                    "scikit-image>=0.19.0",  # Provides 'skimage' module
                     "scipy>=1.9.0",
                     "matplotlib>=3.5.0",
                     "timm>=0.6.0",
