@@ -8,7 +8,6 @@ import argparse
 import sys
 import os
 import time
-import glob
 
 # Ensure we use Ray from /opt/ray
 RAY_PYTHON = "/opt/ray/bin/python"
@@ -36,32 +35,15 @@ except ImportError as e:
     sys.exit(1)
 
 
-def find_models(model_dir: str = "/data/models/stablediffusion"):
-    """Find all Kandinsky model files (.ckpt and .safetensors) in the model directory"""
-    if not os.path.exists(model_dir):
-        return []
-    
-    models = []
-    for pattern in ["*.ckpt", "*.safetensors"]:
-        for file in glob.glob(os.path.join(model_dir, pattern)):
-            # Filter for Kandinsky models (by filename)
-            filename = os.path.basename(file).lower()
-            if "kandinsky" in filename:
-                model_name = os.path.basename(file).replace(".safetensors", "").replace(".ckpt", "")
-                models.append({
-                    "name": model_name,
-                    "path": file
-                })
-    
-    return sorted(models, key=lambda x: x["name"])
+# Removed find_models function - no longer needed since we only use HuggingFace models
 
 
 def deploy_kandinsky(model_name: str, model_path: str, app_name: str = None):
     """Deploy Kandinsky endpoint with separate application"""
     
     print(f"🚀 Deploying Kandinsky endpoint...")
-    print(f"   Model: {model_name}")
-    print(f"   Model path: {model_path}")
+    print(f"   Model ID: {model_path}")
+    print(f"   Model name: {model_name}")
     
     # Create unique app name from model name
     if app_name is None:
@@ -79,11 +61,10 @@ def deploy_kandinsky(model_name: str, model_path: str, app_name: str = None):
         route_prefix=f"/{app_name}/v1",
     )
     
-    model_id = os.path.basename(model_path).replace(".safetensors", "").replace(".ckpt", "")
     print(f"✅ Kandinsky endpoint deployed successfully!")
     print(f"   Application: {app_name}")
     print(f"   API: http://<head-node-ip>:8000/{app_name}/v1")
-    print(f"   Model: {model_id}")
+    print(f"   Model ID: {model_path}")
     print(f"   Autoscaling: Scale to zero enabled (5 min idle timeout)")
     print(f"   Schema endpoint: http://<head-node-ip>:8000/{app_name}/v1/schema")
 
@@ -91,27 +72,10 @@ def deploy_kandinsky(model_name: str, model_path: str, app_name: str = None):
 def main():
     parser = argparse.ArgumentParser(description="Deploy Kandinsky endpoint")
     parser.add_argument(
-        "--model-path",
-        type=str,
-        required=False,
-        help="Path to .ckpt or .safetensors model file",
-    )
-    parser.add_argument(
-        "--model-name",
-        type=str,
-        default=None,
-        help="Model name (default: filename without extension)",
-    )
-    parser.add_argument(
         "--app-name",
         type=str,
         default=None,
-        help="Application name (default: auto-generated from model name)",
-    )
-    parser.add_argument(
-        "--list-models",
-        action="store_true",
-        help="List available Kandinsky models in /data/models/stablediffusion",
+        help="Application name (default: auto-generated)",
     )
     parser.add_argument(
         "--address",
@@ -122,18 +86,8 @@ def main():
     
     args = parser.parse_args()
     
-    # List models if requested
-    if args.list_models:
-        print("📋 Available Kandinsky models:")
-        models = find_models()
-        if not models:
-            print("   No Kandinsky model files found in /data/models/stablediffusion")
-            print("   (Looking for files with 'kandinsky' in the name)")
-        else:
-            for i, model in enumerate(models, 1):
-                size_mb = os.path.getsize(model["path"]) / (1024 * 1024)
-                print(f"   {i}. {model['name']} ({size_mb:.0f} MB)")
-        return
+    # Always use Kandinsky 3.1 from HuggingFace
+    model_id = "ai-forever/Kandinsky3.1"
     
     # Initialize Ray connection
     try:
@@ -152,43 +106,43 @@ def main():
         print("⚠️  Diffusers not found.")
         print("   Note: Diffusers will be installed automatically on worker nodes via runtime_env")
     
-    # Ray Serve should already be running on the cluster
-    # Just connect and deploy (no need to start/restart Serve)
+    # Start Ray Serve with HTTP options to listen on all interfaces
     RAY_SERVE_PORT = 8000  # Default Ray Serve port
+    try:
+        from ray.serve.config import HTTPOptions
+        http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
+        try:
+            serve.start(detached=True, http_options=http_options)
+            print(f"✅ Ray Serve started on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
+        except Exception as start_error:
+            # Serve might already be running - check and restart if needed
+            try:
+                status = serve.status()
+                print(f"🔄 Ray Serve is already running, restarting to apply HTTP options...")
+                serve.shutdown()
+                time.sleep(2)
+                serve.start(detached=True, http_options=http_options)
+                print(f"✅ Ray Serve restarted on 0.0.0.0:{RAY_SERVE_PORT} (accessible from network)")
+            except Exception as restart_error:
+                print(f"⚠️  Ray Serve setup issue: {restart_error}")
+                print(f"   Continuing anyway - Serve may already be configured correctly")
+    except Exception as e:
+        print(f"⚠️  Ray Serve setup issue: {e}")
+        print(f"   Continuing anyway...")
     
-    # Validate model path (if not listing)
-    if not args.list_models:
-        if not args.model_path:
-            print(f"❌ --model-path is required when deploying")
-            sys.exit(1)
-        
-        # Check if it's a HuggingFace model ID (contains '/') or a local path
-        is_hf_model_id = '/' in args.model_path and not os.path.isabs(args.model_path) and not os.path.exists(args.model_path)
-        is_local_file = os.path.isfile(args.model_path)
-        is_local_dir = os.path.isdir(args.model_path)
-        
-        if not (is_hf_model_id or is_local_file or is_local_dir):
-            print(f"❌ Model path not found: {args.model_path}")
-            print(f"   Expected: HuggingFace model ID (e.g., 'ai-forever/Kandinsky3.1'),")
-            print(f"            local file path, or local directory path")
-            sys.exit(1)
-        
-        if is_local_file and not (args.model_path.endswith('.ckpt') or args.model_path.endswith('.safetensors')):
-            print(f"⚠️  Warning: Model file is not .ckpt or .safetensors: {args.model_path}")
-        
-        if is_hf_model_id:
-            print(f"📦 Using HuggingFace model ID: {args.model_path}")
-            print(f"   Model will be downloaded automatically on first use")
+    # Always use Kandinsky 3.1
+    print(f"📦 Using Kandinsky 3.1 from HuggingFace: {model_id}")
+    print(f"   Model will be downloaded automatically on first use")
     
-    # Get model name
-    model_name = args.model_name or os.path.basename(args.model_path).replace(".ckpt", "").replace(".safetensors", "")
+    # Get model name from app name or use default
+    model_name = args.app_name or "kandinsky3-1"
     
     # Deploy the endpoint
     try:
         deploy_start = time.time()
         deploy_kandinsky(
             model_name=model_name,
-            model_path=args.model_path,
+            model_path=model_id,  # Pass model ID as model_path (it will be treated as HuggingFace ID)
             app_name=args.app_name
         )
         deploy_time = time.time() - deploy_start
@@ -199,8 +153,7 @@ def main():
             app_name = args.app_name or f"kandinsky-{model_name.replace('/', '-').replace('_', '-').replace('.', '-')}"
             
             print("\n📊 Deployment Summary:")
-            print(f"   Model: {model_name}")
-            print(f"   Model path: {args.model_path}")
+            print(f"   Model ID: {model_id}")
             print(f"   Application: {app_name}")
             print(f"   Endpoint: http://{head_node_ip}:{RAY_SERVE_PORT}/{app_name}/v1")
             print(f"   Schema: http://{head_node_ip}:{RAY_SERVE_PORT}/{app_name}/v1/schema")
@@ -213,9 +166,9 @@ def main():
             print(f"     -H 'Content-Type: application/json' \\")
             print(f"     -d '{{\"prompt\": \"a beautiful landscape\", \"num_inference_steps\": 50}}'")
         except:
-            app_name = args.app_name or f"kandinsky-{model_name.replace('/', '-').replace('_', '-').replace('.', '-')}"
+            app_name = args.app_name or model_name
             print("\n📊 Deployment Summary:")
-            print(f"   Model: {model_name}")
+            print(f"   Model ID: {model_id}")
             print(f"   Application: {app_name}")
             print(f"   Endpoint: http://<head-node-ip>:{RAY_SERVE_PORT}/{app_name}/v1")
             print(f"   Schema: http://<head-node-ip>:{RAY_SERVE_PORT}/{app_name}/v1/schema")

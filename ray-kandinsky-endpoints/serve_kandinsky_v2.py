@@ -330,15 +330,11 @@ def create_deployment(model_name: str, model_path: str):
                     
                     self.loading_started = True
                     print(f"🚀 Loading Kandinsky model in background: {model_name}")
-                    print(f"   Model path: {model_path}")
-                    print(f"   Path exists: {os.path.exists(model_path) if model_path else 'N/A'}")
-                    if model_path and os.path.exists(model_path):
-                        print(f"   Is directory: {os.path.isdir(model_path)}")
-                        print(f"   Is file: {os.path.isfile(model_path)}")
+                    print(f"   HuggingFace Model ID: {model_path}")
                     
-                    # Detect if it's V3 or V2.2 based on filename
+                    # Detect if it's V3 or V2.2 based on model ID
                     model_lower = model_path.lower() if model_path else ""
-                    is_v3_requested = "kandinsky3" in model_lower or "v3" in model_lower
+                    is_v3_requested = "kandinsky3" in model_lower or "v3" in model_lower or "3.1" in model_lower
                     
                     # Check availability dynamically (since we can't update globals in nested function)
                     import sys
@@ -373,259 +369,69 @@ def create_deployment(model_name: str, model_path: str):
                         print("   Falling back to Kandinsky V2.2")
                         is_v3 = False
                     
-                    # Check if path is a directory or a file
-                    if model_path and os.path.isdir(model_path):
-                        # Load from directory (HuggingFace format)
-                        print("   Loading from directory (HuggingFace format)")
-                        if is_v3 and kandinsky_v3_available:
-                            print("   Detected Kandinsky V3 - using Kandinsky3Pipeline")
-                            try:
-                                self.pipeline = Kandinsky3Pipeline.from_pretrained(
-                                    model_path,
-                                    torch_dtype=torch.float16,
-                                    local_files_only=True
-                                )
-                                self.is_v3 = True
-                            except Exception as e:
-                                print(f"   ⚠️  Failed to load as Kandinsky V3: {e}")
-                                print("   Falling back to Kandinsky V2.2")
-                                is_v3 = False
-                                self.pipeline = KandinskyV22Pipeline.from_pretrained(
-                                    model_path,
-                                    torch_dtype=torch.float16,
-                                    local_files_only=True
-                                )
-                                self.is_v3 = False
-                        else:
-                            print("   Using KandinskyV22Pipeline (V2.2)")
-                            self.pipeline = KandinskyV22Pipeline.from_pretrained(
-                                model_path,
-                                torch_dtype=torch.float16,
-                                local_files_only=True
-                            )
-                            self.is_v3 = False
-                    elif model_path and os.path.isfile(model_path):
-                        # Try to load from single file (checkpoint)
-                        print("   Loading from single checkpoint file")
-                        is_safetensors = model_path.endswith(".safetensors")
-                        
-                        # For Kandinsky 3, try custom package first
-                        if is_v3 and kandinsky_v3_custom_available:
-                            print("   Detected Kandinsky V3 - using custom kandinsky3 package")
-                            try:
-                                from kandinsky3 import get_T2I_pipeline
-                                
-                                # Set up device and dtype map (as per HuggingFace docs)
-                                device_map = torch.device('cuda:0')
-                                dtype_map = {
-                                    'unet': torch.float32,
-                                    'text_encoder': torch.float16,
-                                    'movq': torch.float32,
-                                }
-                                
-                                # According to HuggingFace docs, get_T2I_pipeline doesn't accept model_path
-                                # It loads from HuggingFace by default (ai-forever/Kandinsky3.1)
-                                # If user provided a local .ckpt file, we'll use the HuggingFace model
-                                # and note that the local file won't be used directly
-                                if model_path and os.path.isfile(model_path):
-                                    print(f"   Note: Local checkpoint file provided: {model_path}")
-                                    print("   The kandinsky3 package loads from HuggingFace by default")
-                                    print("   Using model: ai-forever/Kandinsky3.1")
-                                    print("   (Local .ckpt files require conversion to HuggingFace format)")
-                                
-                                # Load pipeline from HuggingFace (ai-forever/Kandinsky3.1)
-                                print("   Loading Kandinsky 3 from HuggingFace (ai-forever/Kandinsky3.1)...")
-                                self.pipeline = get_T2I_pipeline(device_map, dtype_map)
-                                
-                                self.is_v3 = True
-                                print("   ✅ Loaded Kandinsky 3 using custom package")
-                            except Exception as e:
-                                error_msg = str(e)
-                                print(f"   ⚠️  Failed to load with custom kandinsky3 package: {error_msg}")
+                    # Load from HuggingFace (model_path is always a HuggingFace model ID now)
+                    if is_v3 and kandinsky_v3_custom_available:
+                        # Use custom kandinsky3 package for V3
+                        print("   Using custom kandinsky3 package for Kandinsky V3")
+                        try:
+                            from kandinsky3 import get_T2I_pipeline
+                            
+                            # Set up device and dtype map
+                            device_map = torch.device('cuda:0')
+                            dtype_map = {
+                                'unet': torch.float32,
+                                'text_encoder': torch.float16,
+                                'movq': torch.float32,
+                            }
+                            
+                            # Note: get_T2I_pipeline loads from HuggingFace by default
+                            # It uses ai-forever/Kandinsky3.1, but we can't specify a different model
+                            print(f"   Loading from HuggingFace: {model_path}")
+                            print("   (Note: kandinsky3 package loads ai-forever/Kandinsky3.1 by default)")
+                            self.pipeline = get_T2I_pipeline(device_map, dtype_map)
+                            self.is_v3 = True
+                            print("   ✅ Loaded Kandinsky 3 using custom package")
+                        except Exception as e:
+                            print(f"   ⚠️  Failed to load with custom kandinsky3 package: {e}")
+                            if kandinsky_v3_diffusers_available:
                                 print("   Trying diffusers Kandinsky3Pipeline as fallback...")
-                                # Fall through to try diffusers
-                                if kandinsky_v3_diffusers_available:
-                                    try:
-                                        from diffusers import Kandinsky3Pipeline
-                                        if hasattr(Kandinsky3Pipeline, 'from_single_file'):
-                                            self.pipeline = Kandinsky3Pipeline.from_single_file(
-                                                model_path,
-                                                torch_dtype=torch.float16,
-                                                use_safetensors=is_safetensors
-                                            )
-                                            self.is_v3 = True
-                                        else:
-                                            raise RuntimeError("Kandinsky3Pipeline.from_single_file not available")
-                                    except Exception as e2:
-                                        raise RuntimeError(
-                                            f"Failed to load Kandinsky 3 from checkpoint: {model_path}\n"
-                                            f"Custom package error: {error_msg}\n"
-                                            f"Diffusers error: {str(e2)}\n"
-                                            f"Kandinsky 3 requires the custom 'kandinsky3' package for .ckpt files."
-                                        )
-                                else:
-                                    raise RuntimeError(
-                                        f"Failed to load Kandinsky 3 from checkpoint: {model_path}\n"
-                                        f"Error: {error_msg}\n"
-                                        f"Kandinsky 3 requires the custom 'kandinsky3' package. Install with: pip install kandinsky3"
-                                    )
-                        # Try diffusers from_single_file for V3 or V2.2
-                        elif is_v3 and kandinsky_v3_diffusers_available:
-                            print("   Detected Kandinsky V3 - trying diffusers Kandinsky3Pipeline")
-                            try:
-                                if hasattr(Kandinsky3Pipeline, 'from_single_file'):
-                                    self.pipeline = Kandinsky3Pipeline.from_single_file(
-                                        model_path,
-                                        torch_dtype=torch.float16,
-                                        use_safetensors=is_safetensors
-                                    )
-                                    self.is_v3 = True
-                                else:
-                                    raise AttributeError("from_single_file not available for Kandinsky3Pipeline in diffusers")
-                            except Exception as e:
-                                error_msg = str(e)
-                                print(f"   ❌ Diffusers Kandinsky3Pipeline failed: {error_msg}")
-                                raise RuntimeError(
-                                    f"Failed to load Kandinsky 3 from checkpoint: {model_path}\n"
-                                    f"Error: {error_msg}\n"
-                                    f"Kandinsky 3 .ckpt files require the custom 'kandinsky3' package. Install with: pip install kandinsky3"
-                                )
-                        else:
-                            # Try V2.2 from diffusers
-                            print("   Using KandinskyV22Pipeline (V2.2) for checkpoint file")
-                            try:
-                                if hasattr(KandinskyV22Pipeline, 'from_single_file'):
-                                    self.pipeline = KandinskyV22Pipeline.from_single_file(
-                                        model_path,
-                                        torch_dtype=torch.float16,
-                                        use_safetensors=is_safetensors
-                                    )
-                                    self.is_v3 = False
-                                else:
-                                    raise AttributeError("from_single_file not available for KandinskyV22Pipeline")
-                            except Exception as e:
-                                error_msg = str(e)
-                                print(f"   ❌ from_single_file failed: {error_msg}")
-                                print("   Kandinsky V2.2 may not support loading from single checkpoint files.")
-                                print("   Please use one of the following:")
-                                print("   1. A HuggingFace model directory (with config.json, etc.)")
-                                print("   2. A HuggingFace model ID (e.g., 'ai-forever/kandinsky-2.2-decoder')")
-                                raise RuntimeError(
-                                    f"Failed to load Kandinsky model from checkpoint file: {model_path}\n"
-                                    f"Error: {error_msg}\n"
-                                    f"Kandinsky V2.2 may require a HuggingFace model directory or model ID."
-                                )
-                    else:
-                        # Try as HuggingFace model ID or use kandinsky3 custom package
-                        print(f"   Treating as HuggingFace model ID or using kandinsky3 package: {model_path}")
-                        if is_v3 and kandinsky_v3_custom_available:
-                            # Use custom kandinsky3 package - it loads from HuggingFace automatically
-                            print("   Using Kandinsky 3 custom package (kandinsky3)")
-                            print("   Note: get_T2I_pipeline loads from HuggingFace automatically")
-                            try:
-                                from kandinsky3 import get_T2I_pipeline
-                                
-                                device_map = torch.device('cuda:0')
-                                dtype_map = {
-                                    'unet': torch.float32,
-                                    'text_encoder': torch.float16,
-                                    'movq': torch.float32,
-                                }
-                                
-                                # get_T2I_pipeline loads from ai-forever/Kandinsky3.1 automatically
-                                # It doesn't accept a model_path parameter
-                                print("   Loading pipeline (will download/cache model from HuggingFace)...")
-                                print(f"   Device: {device_map}")
-                                self.pipeline = get_T2I_pipeline(device_map, dtype_map)
-                                # kandinsky3 pipeline is already on GPU via device_map, no need for .to()
-                                print("   ✅ Pipeline loaded (already on GPU via device_map)")
-                                self.is_v3 = True
-                                self._pipeline_needs_to_cuda = False  # Flag to skip .to() later
-                            except Exception as e:
-                                error_msg = str(e)
-                                print(f"   ⚠️  Failed to load with custom package: {error_msg}")
-                                import traceback
-                                traceback.print_exc()
-                                # Fall through to try diffusers
-                                if kandinsky_v3_diffusers_available:
-                                    print("   Trying diffusers Kandinsky3Pipeline as fallback...")
-                                    try:
-                                        from diffusers import Kandinsky3Pipeline
-                                        # Try different model IDs
-                                        model_ids_to_try = [
-                                            model_path,  # User provided
-                                            "ai-forever/Kandinsky3.0",  # Alternative
-                                            "kandinsky-community/kandinsky-3",  # Community version
-                                        ]
-                                        loaded = False
-                                        for mid in model_ids_to_try:
-                                            try:
-                                                print(f"   Trying model ID: {mid}")
-                                                self.pipeline = Kandinsky3Pipeline.from_pretrained(
-                                                    mid,
-                                                    torch_dtype=torch.float16
-                                                )
-                                                self.is_v3 = True
-                                                loaded = True
-                                                break
-                                            except Exception as e2:
-                                                print(f"   Failed with {mid}: {str(e2)[:100]}")
-                                                continue
-                                        if not loaded:
-                                            raise RuntimeError(f"Could not load from any model ID: {model_ids_to_try}")
-                                    except Exception as e2:
-                                        raise RuntimeError(f"Failed to load Kandinsky 3: {error_msg} (custom package) and {str(e2)} (diffusers)")
-                                else:
-                                    raise RuntimeError(f"Failed to load Kandinsky 3: {error_msg}")
-                        elif is_v3 and kandinsky_v3_diffusers_available:
-                            print("   Detected Kandinsky V3 - trying diffusers Kandinsky3Pipeline")
-                            try:
-                                from diffusers import Kandinsky3Pipeline
-                                # Try different model IDs
-                                model_ids_to_try = [
-                                    model_path,
-                                    "ai-forever/Kandinsky3.0",
-                                    "kandinsky-community/kandinsky-3",
-                                ]
-                                loaded = False
-                                for mid in model_ids_to_try:
-                                    try:
-                                        print(f"   Trying model ID: {mid}")
-                                        self.pipeline = Kandinsky3Pipeline.from_pretrained(
-                                            mid,
-                                            torch_dtype=torch.float16
-                                        )
-                                        self.is_v3 = True
-                                        loaded = True
-                                        break
-                                    except Exception as e:
-                                        print(f"   Failed with {mid}: {str(e)[:100]}")
-                                        continue
-                                if not loaded:
-                                    print("   ⚠️  Failed to load as Kandinsky V3 from any model ID")
-                                    print("   Falling back to Kandinsky V2.2")
-                                    is_v3 = False
-                                    self.pipeline = KandinskyV22Pipeline.from_pretrained(
+                                try:
+                                    from diffusers import Kandinsky3Pipeline
+                                    print(f"   Loading from HuggingFace: {model_path}")
+                                    self.pipeline = Kandinsky3Pipeline.from_pretrained(
                                         model_path,
                                         torch_dtype=torch.float16
                                     )
-                                    self.is_v3 = False
-                            except Exception as e:
-                                print(f"   ⚠️  Failed to load as Kandinsky V3: {e}")
-                                print("   Falling back to Kandinsky V2.2")
-                                is_v3 = False
-                                self.pipeline = KandinskyV22Pipeline.from_pretrained(
-                                    model_path,
-                                    torch_dtype=torch.float16
-                                )
-                                self.is_v3 = False
-                        else:
-                            print("   Using KandinskyV22Pipeline (V2.2)")
-                            self.pipeline = KandinskyV22Pipeline.from_pretrained(
+                                    self.is_v3 = True
+                                    print("   ✅ Loaded Kandinsky 3 using diffusers")
+                                except Exception as e2:
+                                    raise RuntimeError(f"Failed to load Kandinsky 3: {e2}")
+                            else:
+                                raise RuntimeError(f"Failed to load Kandinsky 3: {e}")
+                    elif is_v3 and kandinsky_v3_diffusers_available:
+                        # Use diffusers for V3
+                        print("   Using diffusers Kandinsky3Pipeline for V3")
+                        try:
+                            from diffusers import Kandinsky3Pipeline
+                            print(f"   Loading from HuggingFace: {model_path}")
+                            self.pipeline = Kandinsky3Pipeline.from_pretrained(
                                 model_path,
                                 torch_dtype=torch.float16
                             )
-                            self.is_v3 = False
+                            self.is_v3 = True
+                            print("   ✅ Loaded Kandinsky 3 using diffusers")
+                        except Exception as e:
+                            raise RuntimeError(f"Failed to load Kandinsky 3: {e}")
+                    else:
+                        # Use V2.2
+                        print("   Using KandinskyV22Pipeline (V2.2)")
+                        print(f"   Loading from HuggingFace: {model_path}")
+                        self.pipeline = KandinskyV22Pipeline.from_pretrained(
+                            model_path,
+                            torch_dtype=torch.float16
+                        )
+                        self.is_v3 = False
+                        print("   ✅ Loaded Kandinsky V2.2")
                     
                     # Move to GPU (only for diffusers pipelines, kandinsky3 custom package is already on GPU)
                     if self._pipeline_needs_to_cuda:
@@ -887,15 +693,14 @@ def create_deployment(model_name: str, model_path: str):
                 # Use discovered schema to build pipeline kwargs dynamically
                 pipeline_kwargs = self._build_pipeline_kwargs(data)
                 
-                # Ensure torch is available
-                if not TORCH_AVAILABLE:
-                    try:
-                        import torch
-                    except ImportError:
-                        return JSONResponse(
-                            {"error": "PyTorch is not available. Please install torch."},
-                            status_code=500
-                        )
+                # Ensure torch is available (it should be from __init__, but check just in case)
+                try:
+                    import torch
+                except ImportError:
+                    return JSONResponse(
+                        {"error": "PyTorch is not available. Please install torch."},
+                        status_code=500
+                    )
                 
                 # Generate image
                 with torch.inference_mode():
