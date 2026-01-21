@@ -43,12 +43,11 @@ def create_deployment(model_name: str, model_path: str):
             "num_gpus": 1,
             "runtime_env": {
                 "pip": [
-                    # Core build dependencies FIRST (must be before ray[serve])
-                    "packaging>=21.0",  # Required by Ray for runtime env verification - MUST be first
+                    # Core build dependencies (needed for package installation)
                     "setuptools>=65.0",  # Required for building packages
                     "wheel>=0.38.0",  # Required for building packages
-                    # Ray and core dependencies (after packaging is installed)
-                    "ray[serve]>=2.49.0",  # Includes Ray Serve and all core dependencies
+                    "packaging>=21.0",  # Required by Ray for runtime env verification
+                    # Note: ray[serve] is NOT included here - use system Ray installation
                     # ML/AI framework dependencies
                     "torch>=2.0.0",
                     "torchvision>=0.15.0",
