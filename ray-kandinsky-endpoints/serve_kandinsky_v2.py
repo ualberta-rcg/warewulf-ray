@@ -32,11 +32,12 @@ def create_deployment(model_name: str, model_path: str):
         name=deployment_name,
         autoscaling_config={
             "min_replicas": 0,  # Scale to zero
-            "max_replicas": 1,  # Max 1 replica per model
+            "max_replicas": 5,  # Max 5 replicas per model
             "target_num_ongoing_requests_per_replica": 1,
             "initial_replicas": 0,
             "downscale_delay_s": 300,  # Wait 5 minutes before scaling down
             "upscale_delay_s": 0,  # Scale up immediately
+            "max_queued_requests": 0,  # Don't queue - return immediately when scaling up
         },
         ray_actor_options={
             "num_gpus": 1,
@@ -189,24 +190,42 @@ def create_deployment(model_name: str, model_path: str):
                             print("   ⚠️  Image-to-image will not be available (memory constraints)")
                             self.img2img_pipeline = None
                     
-                    # For inpainting, reuse base pipeline or create from components
+                    # For inpainting, Kandinsky 3 has a separate inpainting model
+                    # Load it directly instead of trying to create from base pipeline
                     print("   Checking inpainting capability...")
                     if hasattr(self.pipeline, 'inpaint'):
                         print("   ✅ Base pipeline supports inpaint method (reusing base pipeline)")
                         self.inpaint_pipeline = self.pipeline  # Reuse base pipeline to save memory
                     else:
-                        # Try to create inpainting pipeline from base pipeline components
+                        # Try loading the separate Kandinsky 3 inpainting model
+                        # This is a separate fine-tuned model, not created from base
+                        inpainting_model_path = model_path.replace("/kandinsky-3", "/kandinsky-3-inpainting")
+                        if inpainting_model_path == model_path:
+                            # If model_path doesn't contain "/kandinsky-3", try appending "-inpainting"
+                            inpainting_model_path = f"{model_path}-inpainting"
+                        
                         try:
-                            print("   Attempting to create inpainting pipeline from base components...")
-                            self.inpaint_pipeline = AutoPipelineForInpainting.from_pipe(
-                                self.pipeline,
+                            print(f"   Attempting to load separate inpainting model: {inpainting_model_path}")
+                            self.inpaint_pipeline = AutoPipelineForInpainting.from_pretrained(
+                                inpainting_model_path,
+                                variant="fp16",
                                 torch_dtype=torch.float16
                             )
-                            print("   ✅ Created inpainting pipeline from base (shares components)")
+                            print(f"   ✅ Loaded separate inpainting model: {inpainting_model_path}")
                         except Exception as inpaint_err:
-                            print(f"   ⚠️  Cannot create inpainting from base: {inpaint_err}")
-                            print("   ⚠️  Inpainting will not be available (memory constraints)")
-                            self.inpaint_pipeline = None
+                            print(f"   ⚠️  Cannot load inpainting model from {inpainting_model_path}: {inpaint_err}")
+                            # Fallback: try creating from base pipeline (might not work for Kandinsky 3)
+                            try:
+                                print("   Attempting fallback: create inpainting from base components...")
+                                self.inpaint_pipeline = AutoPipelineForInpainting.from_pipe(
+                                    self.pipeline,
+                                    torch_dtype=torch.float16
+                                )
+                                print("   ✅ Created inpainting pipeline from base (shares components)")
+                            except Exception as fallback_err:
+                                print(f"   ⚠️  Fallback also failed: {fallback_err}")
+                                print("   ⚠️  Inpainting will not be available")
+                                self.inpaint_pipeline = None
                     
                     # Use CPU offloading instead of moving everything to GPU
                     # This saves memory by moving components to CPU when not in use
@@ -450,11 +469,76 @@ def create_deployment(model_name: str, model_path: str):
             """Handle API requests"""
             path = request.url.path
             
+            # For generation endpoints, check readiness immediately before any processing
+            # This allows immediate response when scaling up from zero
             if path.endswith("/generate") or path.endswith("/text-to-image"):
+                # Quick readiness check - return immediately if not ready
+                if not (hasattr(self, 'model_loaded') and self.model_loaded and 
+                        hasattr(self, 'pipeline') and self.pipeline is not None):
+                    return JSONResponse(
+                        {
+                            "status": "scaling_up",
+                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60 seconds.",
+                            "model": getattr(self, 'model_name', 'unknown'),
+                            "estimated_ready_time_seconds": 60,
+                            "retry_after": 60,
+                            "poll_url": str(request.url),
+                            "action": "retry_later"
+                        },
+                        status_code=202,
+                        headers={
+                            "Retry-After": "60",
+                            "X-Status": "scaling-up",
+                            "X-Action": "retry-later",
+                            "Content-Type": "application/json"
+                        }
+                    )
                 return await self.handle_generate(request)
             elif path.endswith("/image-to-image") or path.endswith("/img2img"):
+                # Quick readiness check for img2img
+                if not (hasattr(self, 'model_loaded') and self.model_loaded and 
+                        hasattr(self, 'img2img_pipeline') and self.img2img_pipeline is not None):
+                    return JSONResponse(
+                        {
+                            "status": "scaling_up",
+                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60 seconds.",
+                            "model": getattr(self, 'model_name', 'unknown'),
+                            "estimated_ready_time_seconds": 60,
+                            "retry_after": 60,
+                            "poll_url": str(request.url),
+                            "action": "retry_later"
+                        },
+                        status_code=202,
+                        headers={
+                            "Retry-After": "60",
+                            "X-Status": "scaling-up",
+                            "X-Action": "retry-later",
+                            "Content-Type": "application/json"
+                        }
+                    )
                 return await self.handle_image_to_image(request)
             elif path.endswith("/inpaint") or path.endswith("/inpainting"):
+                # Quick readiness check for inpainting
+                if not (hasattr(self, 'model_loaded') and self.model_loaded and 
+                        hasattr(self, 'inpaint_pipeline') and self.inpaint_pipeline is not None):
+                    return JSONResponse(
+                        {
+                            "status": "scaling_up",
+                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60 seconds.",
+                            "model": getattr(self, 'model_name', 'unknown'),
+                            "estimated_ready_time_seconds": 60,
+                            "retry_after": 60,
+                            "poll_url": str(request.url),
+                            "action": "retry_later"
+                        },
+                        status_code=202,
+                        headers={
+                            "Retry-After": "60",
+                            "X-Status": "scaling-up",
+                            "X-Action": "retry-later",
+                            "Content-Type": "application/json"
+                        }
+                    )
                 return await self.handle_inpaint(request)
             elif path.endswith("/schema"):
                 return await self.handle_schema(request)
