@@ -22,7 +22,7 @@ from ray import serve
 # This prevents issues when Ray creates multiple replicas in the same process
 
 
-def create_deployment(model_name: str, model_path: str):
+def create_deployment(model_name: str, model_path: str, hf_token: str = None):
     """Create a deployment with unique name and autoscaling for a specific MedGemma model"""
     
     # Create unique deployment name from model name
@@ -68,7 +68,7 @@ def create_deployment(model_name: str, model_path: str):
                 ],
                 "env_vars": {
                     "HF_HOME": "/data/models",
-                    "HF_TOKEN": os.environ.get("HF_TOKEN", ""),  # For gated models
+                    # Token will be passed as parameter and set in worker's __init__
                 }
             }
         }
@@ -76,7 +76,7 @@ def create_deployment(model_name: str, model_path: str):
     class MedGemmaEndpoint:
         """MedGemma endpoint with autoscaling and dynamic input discovery"""
         
-        def __init__(self, model_name: str = model_name, model_path: str = model_path):
+        def __init__(self, model_name: str = model_name, model_path: str = model_path, hf_token: str = None):
             self.model_loaded = False
             self.model = None  # AutoModelForImageTextToText
             self.processor = None  # AutoProcessor
@@ -85,6 +85,17 @@ def create_deployment(model_name: str, model_path: str):
             self.schema = None  # Will be populated after model loads
             self.loading_error = None  # Store loading errors for API responses
             self.loading_started = False  # Track if loading has started
+            
+            # Get HF token from parameter, or fall back to environment
+            self.hf_token = hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            
+            # Set token in environment for transformers library
+            if self.hf_token:
+                os.environ["HF_TOKEN"] = self.hf_token
+                os.environ["HUGGING_FACE_HUB_TOKEN"] = self.hf_token
+                print(f"✅ HuggingFace token configured (length: {len(self.hf_token)})")
+            else:
+                print("⚠️  No HuggingFace token found - may fail for gated models")
             
             # Import torch and transformers (they're in runtime_env, so should be available)
             try:
@@ -133,7 +144,7 @@ def create_deployment(model_name: str, model_path: str):
                     self.processor = AutoProcessor.from_pretrained(
                         model_path,
                         trust_remote_code=True,
-                        token=os.environ.get("HF_TOKEN")
+                        token=self.hf_token
                     )
                     print("   ✅ Processor loaded")
                     
@@ -148,7 +159,7 @@ def create_deployment(model_name: str, model_path: str):
                             torch_dtype=torch.bfloat16,
                             device_map="auto",  # Automatically handle device placement
                             trust_remote_code=True,
-                            token=os.environ.get("HF_TOKEN")
+                            token=self.hf_token
                         )
                         print("   ✅ Model loaded with bfloat16 and device_map='auto'")
                     except Exception as bf16_err:
@@ -160,7 +171,7 @@ def create_deployment(model_name: str, model_path: str):
                                 torch_dtype=torch.float16,
                                 device_map="auto",
                                 trust_remote_code=True,
-                                token=os.environ.get("HF_TOKEN")
+                                token=self.hf_token
                             )
                             print("   ✅ Model loaded with float16 and device_map='auto'")
                         except Exception as f16_err:
@@ -171,7 +182,7 @@ def create_deployment(model_name: str, model_path: str):
                                 model_path,
                                 device_map="auto",
                                 trust_remote_code=True,
-                                token=os.environ.get("HF_TOKEN")
+                                token=self.hf_token
                             )
                             print("   ✅ Model loaded with default dtype")
                     
@@ -583,7 +594,7 @@ def create_deployment(model_name: str, model_path: str):
     return MedGemmaEndpoint
 
 
-def create_app(model_name: str, model_path: str):
+def create_app(model_name: str, model_path: str, hf_token: str = None):
     """Create a Ray Serve application for a specific MedGemma model"""
-    deployment_class = create_deployment(model_name, model_path)
-    return deployment_class.bind(model_name=model_name, model_path=model_path)
+    deployment_class = create_deployment(model_name, model_path, hf_token=hf_token)
+    return deployment_class.bind(model_name=model_name, model_path=model_path, hf_token=hf_token)

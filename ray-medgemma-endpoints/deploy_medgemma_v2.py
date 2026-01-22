@@ -35,7 +35,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-def deploy_medgemma(model_name: str, model_path: str, app_name: str = None, serve_port: int = 9202):
+def deploy_medgemma(model_name: str, model_path: str, app_name: str = None, serve_port: int = 9202, hf_token: str = None):
     """Deploy MedGemma endpoint with separate application"""
     
     print(f"🚀 Deploying MedGemma endpoint...")
@@ -49,7 +49,7 @@ def deploy_medgemma(model_name: str, model_path: str, app_name: str = None, serv
     print(f"   Application name: {app_name}")
     
     # Create the application
-    app = create_app(model_name=model_name, model_path=model_path)
+    app = create_app(model_name=model_name, model_path=model_path, hf_token=hf_token)
     
     # Deploy using serve.run with unique app name
     serve.run(
@@ -93,8 +93,17 @@ def main():
         default=9202,
         help="Ray Serve HTTP port (default: 9202)",
     )
+    parser.add_argument(
+        "--hf-token",
+        type=str,
+        default=None,
+        help="HuggingFace token for gated models (or set HF_TOKEN env var)",
+    )
     
     args = parser.parse_args()
+    
+    # Get HF token from argument or environment
+    hf_token = args.hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     
     # Use MedGemma 27B from HuggingFace
     model_id = args.model_path
@@ -161,12 +170,12 @@ def main():
         print("   Note: Transformers will be installed automatically on worker nodes via runtime_env")
     
     # Check for HF token (may be required for gated models)
-    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     if hf_token:
         print("✅ HuggingFace token found (required for gated models)")
+        print(f"   Token length: {len(hf_token)} characters")
     else:
         print("⚠️  No HuggingFace token found - may be required for MedGemma (gated model)")
-        print("   Set HF_TOKEN environment variable if needed")
+        print("   Set HF_TOKEN environment variable or use --hf-token argument")
     
     # Start Ray Serve with HTTP options to listen on all interfaces (0.0.0.0)
     RAY_SERVE_PORT = args.port
@@ -223,7 +232,8 @@ def main():
             model_name=model_name,
             model_path=model_id,
             app_name=args.app_name,
-            serve_port=RAY_SERVE_PORT
+            serve_port=RAY_SERVE_PORT,
+            hf_token=hf_token
         )
         deploy_time = time.time() - deploy_start
         
