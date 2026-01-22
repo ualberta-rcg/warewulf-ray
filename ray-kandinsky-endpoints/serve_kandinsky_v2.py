@@ -601,6 +601,7 @@ def create_deployment(model_name: str, model_path: str):
         async def handle_image_to_image(self, request: Request) -> Any:
             """Handle image-to-image generation requests"""
             try:
+                print("🖼️  Image-to-image request received")
                 # Check if model is ready
                 model_ready = (
                     hasattr(self, 'model_loaded') and 
@@ -610,6 +611,7 @@ def create_deployment(model_name: str, model_path: str):
                 )
                 
                 if not model_ready:
+                    print("⚠️  Image-to-image pipeline not ready")
                     return JSONResponse(
                         {
                             "status": "scaling_up",
@@ -629,65 +631,158 @@ def create_deployment(model_name: str, model_path: str):
                         }
                     )
                 
+                print("✅ Image-to-image pipeline is ready")
                 query_start_time = time.time()
                 
                 # Get request data
-                data = await request.json()
+                print("📥 Parsing request JSON...")
+                try:
+                    data = await request.json()
+                    print(f"✅ Request parsed. Keys: {list(data.keys())}")
+                except Exception as json_err:
+                    print(f"❌ Failed to parse JSON: {json_err}")
+                    import traceback
+                    traceback.print_exc()
+                    return JSONResponse(
+                        {"error": f"Invalid JSON: {str(json_err)}"},
+                        status_code=400
+                    )
                 
                 # Ensure we have an image
                 if "image" not in data:
+                    print("❌ Missing 'image' parameter")
                     return JSONResponse(
                         {"error": "Missing required parameter: 'image' (base64 encoded image data)"},
                         status_code=400
                     )
                 
+                print("🖼️  Image parameter found, decoding...")
+                try:
+                    # Decode image early to catch errors
+                    image_obj = self._decode_base64_image(data["image"])
+                    print(f"✅ Image decoded. Size: {image_obj.size}, Mode: {image_obj.mode}")
+                except Exception as img_err:
+                    print(f"❌ Failed to decode image: {img_err}")
+                    import traceback
+                    traceback.print_exc()
+                    return JSONResponse(
+                        {"error": f"Failed to decode image: {str(img_err)}"},
+                        status_code=400
+                    )
+                
                 # Build pipeline kwargs using the img2img pipeline schema
-                # Temporarily switch schema discovery to img2img pipeline
+                print("🔧 Building pipeline kwargs...")
                 original_pipeline = self.pipeline
                 self.pipeline = self.img2img_pipeline
                 try:
                     # Discover img2img schema if not already done
+                    print("📋 Discovering img2img schema...")
                     img2img_schema = self._discover_pipeline_schema()
                     original_schema = self.schema
                     self.schema = img2img_schema
+                    print(f"✅ Schema discovered. Available parameters: {list(img2img_schema.get('inputs', {}).get('optional', []))}")
+                    
                     pipeline_kwargs = self._build_pipeline_kwargs(data)
+                    print(f"✅ Pipeline kwargs built. Keys: {list(pipeline_kwargs.keys())}")
+                    print(f"   Parameters: {', '.join([f'{k}={type(v).__name__}' for k, v in pipeline_kwargs.items()])}")
                     self.schema = original_schema
+                except Exception as kwargs_err:
+                    print(f"❌ Failed to build pipeline kwargs: {kwargs_err}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
                 finally:
                     self.pipeline = original_pipeline
                 
                 # Ensure torch is available
                 try:
                     import torch
+                    print("✅ PyTorch available")
                 except ImportError:
+                    print("❌ PyTorch not available")
                     return JSONResponse(
                         {"error": "PyTorch is not available. Please install torch."},
                         status_code=500
                     )
                 
                 # Generate image
-                with torch.inference_mode():
-                    # Use image_to_image method if available, otherwise use __call__ with image parameter
-                    if hasattr(self.img2img_pipeline, 'image_to_image'):
-                        result = self.img2img_pipeline.image_to_image(**pipeline_kwargs)
-                    else:
-                        result = self.img2img_pipeline(**pipeline_kwargs)
+                print("🎨 Starting image generation...")
+                print(f"   Pipeline type: {type(self.img2img_pipeline).__name__}")
+                print(f"   Has image_to_image method: {hasattr(self.img2img_pipeline, 'image_to_image')}")
+                print(f"   Pipeline kwargs: {list(pipeline_kwargs.keys())}")
+                
+                try:
+                    with torch.inference_mode():
+                        # Use image_to_image method if available, otherwise use __call__ with image parameter
+                        if hasattr(self.img2img_pipeline, 'image_to_image'):
+                            print("   Using image_to_image() method...")
+                            result = self.img2img_pipeline.image_to_image(**pipeline_kwargs)
+                        else:
+                            print("   Using __call__() method...")
+                            result = self.img2img_pipeline(**pipeline_kwargs)
+                    print(f"✅ Image generation completed. Result type: {type(result)}")
+                    print(f"   Result attributes: {[attr for attr in dir(result) if not attr.startswith('_')]}")
+                except Exception as gen_err:
+                    print(f"❌ Image generation failed: {gen_err}")
+                    import traceback
+                    traceback.print_exc()
+                    return JSONResponse(
+                        {
+                            "error": f"Image generation failed: {str(gen_err)}",
+                            "error_type": type(gen_err).__name__,
+                            "pipeline_type": type(self.img2img_pipeline).__name__,
+                            "pipeline_kwargs_keys": list(pipeline_kwargs.keys())
+                        },
+                        status_code=500
+                    )
                 
                 # Handle diffusers pipeline return format
-                if hasattr(result, 'images'):
-                    image = result.images[0]
-                else:
-                    raise ValueError(f"Unexpected result type from pipeline: {type(result)}")
+                print("📦 Processing pipeline result...")
+                print(f"   Result type: {type(result)}")
+                print(f"   Has 'images' attribute: {hasattr(result, 'images')}")
+                
+                try:
+                    if hasattr(result, 'images'):
+                        print(f"   Result.images type: {type(result.images)}")
+                        print(f"   Result.images length: {len(result.images) if hasattr(result.images, '__len__') else 'N/A'}")
+                        image = result.images[0]
+                        print(f"✅ Image extracted. Type: {type(image)}")
+                        if hasattr(image, 'size'):
+                            print(f"   Image size: {image.size}")
+                        if hasattr(image, 'mode'):
+                            print(f"   Image mode: {image.mode}")
+                    else:
+                        error_msg = f"Unexpected result type from pipeline: {type(result)}"
+                        print(f"❌ {error_msg}")
+                        print(f"   Result attributes: {[attr for attr in dir(result) if not attr.startswith('_')]}")
+                        # Try to get more info about the result
+                        if hasattr(result, '__dict__'):
+                            print(f"   Result __dict__: {result.__dict__}")
+                        raise ValueError(error_msg)
+                except Exception as result_err:
+                    print(f"❌ Failed to process result: {result_err}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
                 
                 query_end_time = time.time()
                 query_duration = query_end_time - query_start_time
                 metrics_end = self._get_resource_metrics()
                 
                 # Convert image to base64
-                from PIL import Image
-                buffered = io.BytesIO()
-                image.save(buffered, format="PNG")
-                img_base64 = base64.b64encode(buffered.getvalue()).decode()
-                image_data = f"data:image/png;base64,{img_base64}"
+                print("🔄 Converting image to base64...")
+                try:
+                    from PIL import Image
+                    buffered = io.BytesIO()
+                    image.save(buffered, format="PNG")
+                    img_base64 = base64.b64encode(buffered.getvalue()).decode()
+                    image_data = f"data:image/png;base64,{img_base64}"
+                    print(f"✅ Image converted. Base64 length: {len(img_base64)}")
+                except Exception as conv_err:
+                    print(f"❌ Failed to convert image: {conv_err}")
+                    import traceback
+                    traceback.print_exc()
+                    raise
                 
                 compute_metrics = {
                     "query_duration_seconds": round(query_duration, 3),
@@ -701,6 +796,7 @@ def create_deployment(model_name: str, model_path: str):
                     "replica_gpu_utilization_percent": metrics_end.get("gpu_utilization_percent", 0),
                 }
                 
+                print(f"✅ Image-to-image request completed successfully in {query_duration:.2f}s")
                 return JSONResponse({
                     "status": "success",
                     "model": self.model_name,
@@ -710,8 +806,17 @@ def create_deployment(model_name: str, model_path: str):
                     "compute_metrics": compute_metrics
                 })
             except Exception as e:
+                error_msg = str(e)
+                error_type = type(e).__name__
+                print(f"❌ Image-to-image request failed: {error_type}: {error_msg}")
+                import traceback
+                traceback.print_exc()
                 return JSONResponse(
-                    {"error": str(e)},
+                    {
+                        "error": error_msg,
+                        "error_type": error_type,
+                        "traceback": traceback.format_exc()
+                    },
                     status_code=500
                 )
         
