@@ -89,6 +89,11 @@ def main():
         default=9202,
         help="Ray Serve HTTP port (default: 9202)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force replace existing application (deletes it first)",
+    )
     
     args = parser.parse_args()
     
@@ -201,6 +206,23 @@ def main():
     
     # Get model name from app name or use default
     model_name = args.app_name or "kandinsky3-1"
+    
+    # Force replace if requested
+    if args.force:
+        app_name = args.app_name or f"kandinsky-{model_name.replace('/', '-').replace('_', '-').replace('.', '-')}"
+        print(f"🔄 Force replace requested for: {app_name}")
+        try:
+            status = serve.status()
+            if hasattr(status, 'applications') and app_name in status.applications:
+                print(f"   Deleting existing application: {app_name}")
+                serve.delete(app_name)
+                print(f"   ✅ Deleted existing application")
+                time.sleep(1)  # Give it a moment to fully delete
+            else:
+                print(f"   Application '{app_name}' not found (will create new)")
+        except Exception as e:
+            print(f"   ⚠️  Could not delete existing application: {e}")
+            print(f"   Continuing with deployment anyway...")
     
     # Deploy the endpoint
     try:
