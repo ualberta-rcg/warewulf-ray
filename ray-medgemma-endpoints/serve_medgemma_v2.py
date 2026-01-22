@@ -22,7 +22,7 @@ from ray import serve
 # This prevents issues when Ray creates multiple replicas in the same process
 
 
-def create_deployment(model_name: str, model_path: str, hf_token: str = None):
+def create_deployment(model_name: str, model_path: str, hf_token: str = None, num_gpus: int = 1):
     """Create a deployment with unique name and autoscaling for a specific MedGemma model"""
     
     # Create unique deployment name from model name
@@ -40,7 +40,7 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None):
             "max_queued_requests": 0,  # Don't queue - return immediately when scaling up
         },
         ray_actor_options={
-            "num_gpus": 1,  # May need to adjust for 27B model (consider multi-GPU or quantization)
+            "num_gpus": num_gpus,  # Configurable number of GPUs (27B model may need 2-4 GPUs)
             "runtime_env": {
                 "pip": [
                     # CRITICAL: packaging MUST be first - Ray's verification needs it immediately
@@ -76,7 +76,9 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None):
     class MedGemmaEndpoint:
         """MedGemma endpoint with autoscaling and dynamic input discovery"""
         
-        def __init__(self, model_name: str = model_name, model_path: str = model_path, hf_token: str = None):
+        def __init__(self, model_name: str = model_name, model_path: str = model_path, hf_token: str = None, num_gpus_param: int = None):
+            # Use provided num_gpus_param or fall back to the one from closure
+            self.num_gpus = num_gpus_param if num_gpus_param is not None else num_gpus
             self.model_loaded = False
             self.model = None  # AutoModelForImageTextToText
             self.processor = None  # AutoProcessor
@@ -150,7 +152,11 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None):
                     
                     # Load model with appropriate settings for 27B model
                     print(f"   Loading model from HuggingFace: {model_path}")
-                    print("   ⚠️  Note: 27B model is large - this may take several minutes and require significant GPU memory")
+                    print(f"   ⚠️  Note: 27B model is large - using {self.num_gpus} GPU(s)")
+                    if self.num_gpus > 1:
+                        print(f"   ✅ Multi-GPU mode: model will be split across {self.num_gpus} GPUs")
+                    else:
+                        print("   ⚠️  Single GPU mode: model may use CPU offloading if GPU memory is insufficient")
                     
                     # Try to load with bfloat16 (recommended for Gemma models)
                     try:
@@ -190,13 +196,16 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None):
                     try:
                         import torch
                         if torch.cuda.is_available():
-                            print(f"   ✅ CUDA available: {torch.cuda.get_device_name(0)}")
-                            allocated = torch.cuda.memory_allocated(0) / 1024**3
-                            reserved = torch.cuda.memory_reserved(0) / 1024**3
-                            total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-                            print(f"   GPU memory allocated: {allocated:.2f} GB / {total:.2f} GB")
-                            print(f"   GPU memory reserved: {reserved:.2f} GB")
-                            print(f"   GPU memory free: {total - reserved:.2f} GB")
+                            num_cuda_devices = torch.cuda.device_count()
+                            print(f"   ✅ CUDA available: {num_cuda_devices} device(s)")
+                            for i in range(num_cuda_devices):
+                                allocated = torch.cuda.memory_allocated(i) / 1024**3
+                                reserved = torch.cuda.memory_reserved(i) / 1024**3
+                                total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                                print(f"   GPU {i} ({torch.cuda.get_device_name(i)}):")
+                                print(f"      Memory allocated: {allocated:.2f} GB / {total:.2f} GB")
+                                print(f"      Memory reserved: {reserved:.2f} GB")
+                                print(f"      Memory free: {total - reserved:.2f} GB")
                         else:
                             print("   ⚠️  CUDA not available - model may be on CPU")
                     except Exception as gpu_check_err:
@@ -594,7 +603,7 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None):
     return MedGemmaEndpoint
 
 
-def create_app(model_name: str, model_path: str, hf_token: str = None):
+def create_app(model_name: str, model_path: str, hf_token: str = None, num_gpus: int = 1):
     """Create a Ray Serve application for a specific MedGemma model"""
-    deployment_class = create_deployment(model_name, model_path, hf_token=hf_token)
-    return deployment_class.bind(model_name=model_name, model_path=model_path, hf_token=hf_token)
+    deployment_class = create_deployment(model_name, model_path, hf_token=hf_token, num_gpus=num_gpus)
+    return deployment_class.bind(model_name=model_name, model_path=model_path, hf_token=hf_token, num_gpus_param=num_gpus)

@@ -35,12 +35,13 @@ except ImportError as e:
     sys.exit(1)
 
 
-def deploy_medgemma(model_name: str, model_path: str, app_name: str = None, serve_port: int = 9202, hf_token: str = None):
+def deploy_medgemma(model_name: str, model_path: str, app_name: str = None, serve_port: int = 9202, hf_token: str = None, num_gpus: int = 1):
     """Deploy MedGemma endpoint with separate application"""
     
     print(f"🚀 Deploying MedGemma endpoint...")
     print(f"   Model ID: {model_path}")
     print(f"   Model name: {model_name}")
+    print(f"   GPUs per replica: {num_gpus}")
     
     # Create unique app name from model name
     if app_name is None:
@@ -49,7 +50,7 @@ def deploy_medgemma(model_name: str, model_path: str, app_name: str = None, serv
     print(f"   Application name: {app_name}")
     
     # Create the application
-    app = create_app(model_name=model_name, model_path=model_path, hf_token=hf_token)
+    app = create_app(model_name=model_name, model_path=model_path, hf_token=hf_token, num_gpus=num_gpus)
     
     # Deploy using serve.run with unique app name
     serve.run(
@@ -98,6 +99,12 @@ def main():
         type=str,
         default=None,
         help="HuggingFace token for gated models (or set HF_TOKEN env var)",
+    )
+    parser.add_argument(
+        "--num-gpus",
+        type=int,
+        default=1,
+        help="Number of GPUs per replica (default: 1, recommend 2-4 for 27B model)",
     )
     
     args = parser.parse_args()
@@ -233,7 +240,8 @@ def main():
             model_path=model_id,
             app_name=args.app_name,
             serve_port=RAY_SERVE_PORT,
-            hf_token=hf_token
+            hf_token=hf_token,
+            num_gpus=args.num_gpus
         )
         deploy_time = time.time() - deploy_start
         
