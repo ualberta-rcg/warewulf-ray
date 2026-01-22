@@ -50,13 +50,11 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None, ma
                     "ray[serve]>=2.49.0",  # Match system Ray version for venv compatibility
                     # ML/AI framework dependencies
                     "numpy>=1.24.0",  # Required by torch and vllm
-                    # Install opencv-python-headless explicitly from PyPI before vllm
-                    # This avoids ComputeCanada dummy package conflict
-                    "opencv-python-headless>=4.11.0",
-                    "vllm>=0.10.1",
                     "torch>=2.0.0",
                     "transformers>=4.30.0",
                     "accelerate>=0.20.0",
+                    # Note: vLLM and opencv-python-headless installed manually in __init__
+                    # to avoid ComputeCanada dummy package conflicts
                     # OpenAI API compatibility
                     "openai>=1.0.0",
                     # Web framework
@@ -73,6 +71,7 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None, ma
                     # Force pip to use PyPI to avoid ComputeCanada dummy packages
                     "PIP_INDEX_URL": "https://pypi.org/simple",
                     "PIP_EXTRA_INDEX_URL": "",  # Clear any ComputeCanada indexes
+                    "PIP_NO_INDEX": "false",  # Allow PyPI but not extra indexes
                     # Token will be passed as parameter and set in worker's __init__
                 }
             }
@@ -102,21 +101,39 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None, ma
             else:
                 print("⚠️  No HuggingFace token found - may fail for gated models")
             
-            # Import vllm (it's in runtime_env, so should be available)
+            # Install vLLM and opencv-python-headless manually to avoid ComputeCanada conflicts
+            # vLLM is not in runtime_env pip list - we install it here with explicit PyPI index
             try:
                 from vllm import LLM, SamplingParams
                 self.vllm_llm_class = LLM
                 self.vllm_sampling_params_class = SamplingParams
                 print("✅ vLLM available")
-            except ImportError as import_err:
-                print(f"⚠️  vLLM not available: {import_err}")
-                print("   Attempting to install...")
+            except ImportError:
+                print("⚠️  vLLM not available, installing from PyPI...")
+                print("   ⏳ This can take 10-20+ minutes (downloading and compiling)")
                 try:
-                    # Use the replica's Python (from runtime_env venv)
                     replica_python = sys.executable
-                    print(f"   Using Python: {replica_python}")
                     import subprocess
-                    # Install vLLM with explicit PyPI index to avoid ComputeCanada package conflicts
+                    
+                    # Step 1: Install opencv-python-headless from PyPI first (before vLLM)
+                    print("   Installing opencv-python-headless from PyPI...")
+                    cv_result = subprocess.run(
+                        [replica_python, "-m", "pip", "install", 
+                         "--index-url", "https://pypi.org/simple",
+                         "--no-deps",  # Don't install deps to avoid ComputeCanada conflicts
+                         "opencv-python-headless>=4.11.0"],
+                        timeout=300,
+                        capture_output=True,
+                        text=True
+                    )
+                    if cv_result.returncode == 0:
+                        print("   ✅ OpenCV installed from PyPI")
+                    else:
+                        print(f"   ⚠️  OpenCV install warning (may be optional): {cv_result.stderr[:300]}")
+                    
+                    # Step 2: Install vLLM from PyPI with explicit index
+                    # This ensures vLLM and its dependencies come from PyPI, not ComputeCanada
+                    print("   Installing vLLM from PyPI...")
                     result = subprocess.run(
                         [replica_python, "-m", "pip", "install", 
                          "--index-url", "https://pypi.org/simple",
@@ -126,7 +143,7 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None, ma
                         text=True
                     )
                     if result.returncode != 0:
-                        print(f"   pip install stderr: {result.stderr[:500]}")
+                        print(f"   pip install stderr: {result.stderr[:1000]}")
                         raise RuntimeError(f"pip install failed with return code {result.returncode}")
                     
                     # Import after installation
