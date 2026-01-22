@@ -116,7 +116,7 @@ If you have `ray.serve.llm` available (Ray 2.49.0+ with serve-llm extension):
 ### OpenAI-Compatible API
 
 The endpoint provides an OpenAI-compatible API at:
-- **Base URL**: `http://<head-node-ip>:8001/v1`
+- **Base URL**: `http://<head-node-ip>:9200/v1`
 - **Model name**: `my-gpt-oss` (or as configured)
 
 ### Example: Python Client
@@ -125,7 +125,7 @@ The endpoint provides an OpenAI-compatible API at:
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://172.26.92.232:8001/v1",
+    base_url="http://172.26.92.232:9200/v1",
     api_key="not-needed"  # API key not required for local deployment
 )
 
@@ -145,7 +145,7 @@ for chunk in response:
 ### Example: cURL
 
 ```bash
-curl http://172.26.92.232:8001/v1/chat/completions \
+curl http://172.26.92.232:9200/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "my-gpt-oss",
@@ -212,9 +212,9 @@ Models are downloaded from HuggingFace. Ensure:
 
 ## Port Configuration
 
-- **Ray Serve HTTP**: Port 8001 (to avoid conflict with Triton on 8000)
+- **Ray Serve HTTP**: Port 9200 (matches other endpoints: kandinsky=9201, medgemma=9202)
 - **Ray Dashboard**: Port 8265
-- **OpenAI API**: `http://<head-node-ip>:8001/v1`
+- **OpenAI API**: `http://<head-node-ip>:9200/v1`
 
 ## Shutdown
 

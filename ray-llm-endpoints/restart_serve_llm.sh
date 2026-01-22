@@ -1,10 +1,10 @@
 #!/bin/bash
-# Restart Ray Serve with HTTP options set to 0.0.0.0:8000
+# Restart Ray Serve with HTTP options set to 0.0.0.0:9200
 # This ensures Ray Serve is accessible from the network
 
 set -e
 
-echo "🔄 Restarting Ray Serve with network access (0.0.0.0:8000)..."
+echo "🔄 Restarting Ray Serve with network access (0.0.0.0:9200)..."
 echo "⚠️  This will stop all currently deployed endpoints!"
 echo "   You'll need to redeploy your endpoints after this."
 echo ""
@@ -35,8 +35,8 @@ try:
 except Exception as e:
     print(f"⚠️  Error stopping Serve: {e}")
 
-# Start with HTTP options (port 8000)
-RAY_SERVE_PORT = 8000
+# Start with HTTP options (port 9200)
+RAY_SERVE_PORT = 9200
 print(f"\nStarting Ray Serve with 0.0.0.0:{RAY_SERVE_PORT}...")
 http_options = HTTPOptions(host="0.0.0.0", port=RAY_SERVE_PORT)
 serve.start(detached=True, http_options=http_options)
@@ -59,4 +59,4 @@ EOF
 rm -f /tmp/restart_serve_llm.py
 
 echo ""
-echo "✅ Done! Ray Serve should now be accessible at http://<head-node-ip>:8000"
+echo "✅ Done! Ray Serve should now be accessible at http://<head-node-ip>:9200"

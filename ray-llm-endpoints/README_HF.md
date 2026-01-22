@@ -40,7 +40,7 @@ MODEL_NAME="deepseek-ai/deepseek-llm-7b-chat" bash deploy_hf.sh
 HEAD_NODE_IP="172.26.92.232"  # Replace with your IP
 
 # Test chat completion
-curl http://${HEAD_NODE_IP}:8001/v1/chat/completions \
+curl http://${HEAD_NODE_IP}:9200/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "deepseek-ai-deepseek-llm-7b-chat",
@@ -158,7 +158,7 @@ vLLM is installed automatically on worker nodes via `runtime_env`. If deployment
    ```
    (Note: Requires disk space)
 
-### "Connection refused" on port 8001
+### "Connection refused" on port 9200
 
 1. Check Ray Serve is running:
    ```bash
@@ -194,7 +194,7 @@ GET /v1/health
 import requests
 
 HEAD_NODE_IP = "172.26.92.232"
-url = f"http://{HEAD_NODE_IP}:8001/v1/chat/completions"
+url = f"http://{HEAD_NODE_IP}:9200/v1/chat/completions"
 
 response = requests.post(url, json={
     "model": "deepseek-ai-deepseek-llm-7b-chat",
