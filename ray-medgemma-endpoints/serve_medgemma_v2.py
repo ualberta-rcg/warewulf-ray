@@ -51,6 +51,7 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None, nu
                     # Install Ray in venv to match system version (needed for verification)
                     "ray[serve]>=2.49.0",  # Match system Ray version for venv compatibility
                     # ML/AI framework dependencies
+                    "numpy>=1.24.0",  # Required by torch and transformers
                     "torch>=2.0.0",
                     "transformers>=4.50.0",  # Required for Gemma 3 / MedGemma support
                     "accelerate>=0.20.0",

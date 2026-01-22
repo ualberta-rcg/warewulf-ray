@@ -49,6 +49,10 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None, ma
                     # Install Ray in venv to match system version (needed for verification)
                     "ray[serve]>=2.49.0",  # Match system Ray version for venv compatibility
                     # ML/AI framework dependencies
+                    "numpy>=1.24.0",  # Required by torch and vllm
+                    # Install opencv-python-headless explicitly from PyPI before vllm
+                    # This avoids ComputeCanada dummy package conflict
+                    "opencv-python-headless>=4.11.0",
                     "vllm>=0.10.1",
                     "torch>=2.0.0",
                     "transformers>=4.30.0",
@@ -66,6 +70,9 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None, ma
                 "env_vars": {
                     "HF_HOME": "/data/models",
                     "VLLM_USE_MODELSCOPE": "False",
+                    # Force pip to use PyPI to avoid ComputeCanada dummy packages
+                    "PIP_INDEX_URL": "https://pypi.org/simple",
+                    "PIP_EXTRA_INDEX_URL": "",  # Clear any ComputeCanada indexes
                     # Token will be passed as parameter and set in worker's __init__
                 }
             }
@@ -109,14 +116,17 @@ def create_deployment(model_name: str, model_path: str, hf_token: str = None, ma
                     replica_python = sys.executable
                     print(f"   Using Python: {replica_python}")
                     import subprocess
+                    # Install vLLM with explicit PyPI index to avoid ComputeCanada package conflicts
                     result = subprocess.run(
                         [replica_python, "-m", "pip", "install", 
+                         "--index-url", "https://pypi.org/simple",
                          "vllm>=0.10.1"],
                         timeout=1200,  # 20 minute timeout
                         capture_output=True,
                         text=True
                     )
                     if result.returncode != 0:
+                        print(f"   pip install stderr: {result.stderr[:500]}")
                         raise RuntimeError(f"pip install failed with return code {result.returncode}")
                     
                     # Import after installation

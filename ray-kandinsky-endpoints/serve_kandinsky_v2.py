@@ -52,6 +52,7 @@ def create_deployment(model_name: str, model_path: str):
                     # This ensures Ray can be imported during verification
                     "ray[serve]>=2.49.0",  # Match system Ray version for venv compatibility
                     # ML/AI framework dependencies
+                    "numpy>=1.24.0",  # Required by torch and diffusers
                     "torch>=2.0.0",
                     "torchvision>=0.15.0",
                     "diffusers>=0.24.0",  # Kandinsky 3 requires 0.24.0+
