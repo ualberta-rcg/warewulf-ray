@@ -57,7 +57,7 @@ Kandinsky models can be loaded from:
 Get the dynamically discovered input schema:
 
 ```bash
-curl http://<head-node-ip>:8000/kandinsky-<model-name>/v1/schema
+curl http://<head-node-ip>:9202/kandinsky-<model-name>/v1/schema
 ```
 
 **Response (when model is loaded):**
@@ -118,7 +118,7 @@ curl http://<head-node-ip>:8000/kandinsky-<model-name>/v1/schema
 ### Generate Image
 
 ```bash
-curl -X POST http://<head-node-ip>:8000/kandinsky-<model-name>/v1/generate \
+curl -X POST http://<head-node-ip>:9202/kandinsky-<model-name>/v1/generate \
   -H 'Content-Type: application/json' \
   -d '{
     "prompt": "a beautiful landscape",
@@ -159,13 +159,13 @@ The API automatically uses the discovered schema to:
 ### Health Check
 
 ```bash
-curl http://<head-node-ip>:8000/kandinsky-<model-name>/v1/health
+curl http://<head-node-ip>:9202/kandinsky-<model-name>/v1/health
 ```
 
 ### List Models
 
 ```bash
-curl http://<head-node-ip>:8000/kandinsky-<model-name>/v1/models
+curl http://<head-node-ip>:9202/kandinsky-<model-name>/v1/models
 ```
 
 ## How Dynamic Input Discovery Works

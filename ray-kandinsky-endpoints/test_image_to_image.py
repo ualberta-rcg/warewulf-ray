@@ -178,8 +178,8 @@ def main():
     parser.add_argument(
         "--url",
         type=str,
-        default="http://172.26.92.232:9201/kandinsky-kandinsky3-1/v1",
-        help="Base URL for the API (default: http://172.26.92.232:9201/kandinsky-kandinsky3-1/v1)"
+        default="http://172.26.92.232:9202/kandinsky-kandinsky3-1/v1",
+        help="Base URL for the API (default: http://172.26.92.232:9202/kandinsky-kandinsky3-1/v1)"
     )
     parser.add_argument(
         "--image",

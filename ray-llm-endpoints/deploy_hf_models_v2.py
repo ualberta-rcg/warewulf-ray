@@ -61,7 +61,7 @@ def get_model_config(model_name: str):
     })
 
 
-def deploy_hf_llm(model_name: str, model_path: str = None, app_name: str = None, serve_port: int = 9200, hf_token: str = None, max_model_len: int = None):
+def deploy_hf_llm(model_name: str, model_path: str = None, app_name: str = None, serve_port: int = 9202, hf_token: str = None, max_model_len: int = None):
     """Deploy HuggingFace LLM endpoint using vLLM with separate application"""
     
     if model_path is None:
@@ -182,8 +182,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=9200,
-        help="Ray Serve HTTP port (default: 9200)",
+        default=9202,
+        help="Ray Serve HTTP port (default: 9202)",
     )
     parser.add_argument(
         "--max-model-len",

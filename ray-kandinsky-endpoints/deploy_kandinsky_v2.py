@@ -38,7 +38,7 @@ except ImportError as e:
 # Removed find_models function - no longer needed since we only use HuggingFace models
 
 
-def deploy_kandinsky(model_name: str, model_path: str, app_name: str = None, serve_port: int = 9201):
+def deploy_kandinsky(model_name: str, model_path: str, app_name: str = None, serve_port: int = 9202):
     """Deploy Kandinsky endpoint with separate application"""
     
     print(f"🚀 Deploying Kandinsky endpoint...")
@@ -86,8 +86,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=9201,
-        help="Ray Serve HTTP port (default: 9201)",
+        default=9202,
+        help="Ray Serve HTTP port (default: 9202)",
     )
     
     args = parser.parse_args()
