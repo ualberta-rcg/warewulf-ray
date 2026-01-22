@@ -585,11 +585,29 @@ def create_deployment(model_name: str, model_path: str):
                     "replica_gpu_utilization_percent": metrics_end.get("gpu_utilization_percent", 0),
                 }
                 
+                # Clean pipeline_kwargs for JSON serialization (remove PIL Images, generators, etc.)
+                serializable_kwargs = {}
+                for key, value in pipeline_kwargs.items():
+                    # Skip non-serializable objects
+                    if isinstance(value, (type(None), str, int, float, bool, list, dict)):
+                        serializable_kwargs[key] = value
+                    elif hasattr(value, '__class__'):
+                        # For complex objects, just store the type name
+                        class_name = value.__class__.__name__
+                        if 'Image' in class_name:
+                            serializable_kwargs[key] = f"<{class_name} object>"
+                        elif 'Generator' in class_name:
+                            serializable_kwargs[key] = f"<{class_name} object>"
+                        else:
+                            serializable_kwargs[key] = f"<{class_name} object>"
+                    else:
+                        serializable_kwargs[key] = str(value)
+                
                 return JSONResponse({
                     "status": "success",
                     "model": self.model_name,
                     "image": image_data,
-                    "parameters": pipeline_kwargs,
+                    "parameters": serializable_kwargs,
                     "compute_metrics": compute_metrics
                 })
             except Exception as e:
@@ -796,13 +814,31 @@ def create_deployment(model_name: str, model_path: str):
                     "replica_gpu_utilization_percent": metrics_end.get("gpu_utilization_percent", 0),
                 }
                 
+                # Clean pipeline_kwargs for JSON serialization (remove PIL Images, generators, etc.)
+                serializable_kwargs = {}
+                for key, value in pipeline_kwargs.items():
+                    # Skip non-serializable objects
+                    if isinstance(value, (type(None), str, int, float, bool, list, dict)):
+                        serializable_kwargs[key] = value
+                    elif hasattr(value, '__class__'):
+                        # For complex objects, just store the type name
+                        class_name = value.__class__.__name__
+                        if 'Image' in class_name:
+                            serializable_kwargs[key] = f"<{class_name} object>"
+                        elif 'Generator' in class_name:
+                            serializable_kwargs[key] = f"<{class_name} object>"
+                        else:
+                            serializable_kwargs[key] = f"<{class_name} object>"
+                    else:
+                        serializable_kwargs[key] = str(value)
+                
                 print(f"✅ Image-to-image request completed successfully in {query_duration:.2f}s")
                 return JSONResponse({
                     "status": "success",
                     "model": self.model_name,
                     "capability": "image-to-image",
                     "image": image_data,
-                    "parameters": pipeline_kwargs,
+                    "parameters": serializable_kwargs,
                     "compute_metrics": compute_metrics
                 })
             except Exception as e:
