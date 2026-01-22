@@ -185,41 +185,44 @@ def main():
         print("   Set HF_TOKEN environment variable or use --hf-token argument")
     
     # Start Ray Serve with HTTP options to listen on all interfaces (0.0.0.0)
+    # IMPORTANT: We only start Ray Serve if it's not running, and we never shutdown
+    # existing deployments. Each app is deployed independently.
     RAY_SERVE_PORT = args.port
     RAY_SERVE_HOST = "0.0.0.0"  # Listen on all interfaces
     
     try:
         from ray.serve.config import HTTPOptions
         
-        # Always shutdown and restart to ensure correct host configuration
+        # Check if Ray Serve is already running
         try:
             status = serve.status()
-            print(f"🔄 Ray Serve is already running, shutting down to reconfigure...")
-            serve.shutdown()
-            time.sleep(3)  # Give it more time to fully shutdown
+            print(f"✅ Ray Serve is already running")
+            # Check if there are other applications
+            if hasattr(status, 'applications') and status.applications:
+                app_count = len(status.applications)
+                print(f"   Found {app_count} existing application(s) - will not affect them")
+            print(f"   MedGemma will be deployed alongside existing deployments")
         except:
-            # Serve not running, that's fine
-            pass
-        
-        # Start with correct host (0.0.0.0 to listen on all interfaces)
-        http_options = HTTPOptions(host=RAY_SERVE_HOST, port=RAY_SERVE_PORT)
-        serve.start(detached=True, http_options=http_options)
-        print(f"✅ Ray Serve started on {RAY_SERVE_HOST}:{RAY_SERVE_PORT} (accessible from network)")
-        
-        # Verify it's actually listening on the right host
-        try:
-            status = serve.status()
-            print(f"   Ray Serve status: {status}")
-            # Try to get the actual proxy address
-            if hasattr(status, 'proxies') and status.proxies:
-                for proxy_id, proxy_info in status.proxies.items():
-                    if hasattr(proxy_info, 'node_id'):
-                        print(f"   Proxy running on node: {proxy_info.node_id}")
-        except Exception as status_err:
-            print(f"   Could not get detailed status: {status_err}")
+            # Serve not running, start it
+            print(f"🚀 Starting Ray Serve on {RAY_SERVE_HOST}:{RAY_SERVE_PORT}...")
+            http_options = HTTPOptions(host=RAY_SERVE_HOST, port=RAY_SERVE_PORT)
+            try:
+                serve.start(detached=True, http_options=http_options)
+                print(f"✅ Ray Serve started on {RAY_SERVE_HOST}:{RAY_SERVE_PORT} (accessible from network)")
+            except Exception as start_err:
+                # Might already be starting or there's a port conflict
+                print(f"⚠️  Could not start Ray Serve: {start_err}")
+                print(f"   Attempting to continue - Ray Serve may already be running")
+                # Try to get status to confirm
+                try:
+                    time.sleep(1)
+                    status = serve.status()
+                    print(f"✅ Ray Serve is running")
+                except:
+                    print(f"⚠️  Ray Serve status unclear - deployment may fail")
             
     except Exception as e:
-        print(f"❌ Ray Serve setup failed: {e}")
+        print(f"⚠️  Ray Serve setup issue: {e}")
         print(f"   Attempting to continue anyway...")
         import traceback
         traceback.print_exc()
