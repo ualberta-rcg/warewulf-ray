@@ -858,6 +858,7 @@ def create_deployment(model_name: str, model_path: str):
         
         def _build_pipeline_kwargs(self, data: Dict) -> Dict:
             """Build pipeline kwargs from request data using discovered schema"""
+            import torch  # Import torch here since it's needed for Generator
             kwargs = {}
             
             # Get defaults from schema
