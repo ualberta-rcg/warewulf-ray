@@ -61,14 +61,19 @@ def get_model_config(model_name: str):
     })
 
 
-def deploy_hf_llm(model_name: str, hf_token: str = None, app_name: str = None):
+def deploy_hf_llm(model_name: str, model_path: str = None, app_name: str = None, serve_port: int = 8000, hf_token: str = None, max_model_len: int = None):
     """Deploy HuggingFace LLM endpoint using vLLM with separate application"""
     
-    config = get_model_config(model_name)
-    max_model_len = config["max_model_len"]
+    if model_path is None:
+        model_path = model_name
     
-    print(f"🚀 Deploying HuggingFace LLM endpoint (vLLM direct)...")
-    print(f"   Model: {model_name}")
+    config = get_model_config(model_name)
+    if max_model_len is None:
+        max_model_len = config["max_model_len"]
+    
+    print(f"🚀 Deploying HuggingFace LLM endpoint...")
+    print(f"   Model ID: {model_path}")
+    print(f"   Model name: {model_name}")
     print(f"   Max context length: {max_model_len} tokens")
     print(f"   Description: {config['description']}")
     if hf_token:
@@ -76,27 +81,27 @@ def deploy_hf_llm(model_name: str, hf_token: str = None, app_name: str = None):
     
     # Create unique app name from model name
     if app_name is None:
-        app_name = f"hf-{model_name.replace('/', '-').replace('_', '-')}"
+        app_name = f"hf-{model_name.replace('/', '-').replace('_', '-').replace('.', '-')}"
     
     print(f"   Application name: {app_name}")
     
     # Create the application
-    app = create_app(model_name=model_name, hf_token=hf_token, max_model_len=max_model_len)
+    app = create_app(model_name=model_name, model_path=model_path, hf_token=hf_token, max_model_len=max_model_len)
     
     # Deploy using serve.run with unique app name
     serve.run(
         app,
-        name=app_name,  # Separate application per model
-        route_prefix=f"/{app_name}/v1",  # Unique route per model
+        name=app_name,
+        route_prefix=f"/{app_name}/v1",
     )
     
-    model_id = model_name.replace("/", "-")
     print(f"✅ HuggingFace LLM endpoint deployed successfully!")
     print(f"   Application: {app_name}")
-    print(f"   OpenAI API: http://<head-node-ip>:8000/{app_name}/v1")
-    print(f"   Model name: {model_id}")
+    print(f"   API: http://<head-node-ip>:{serve_port}/{app_name}/v1")
+    print(f"   Model ID: {model_path}")
     print(f"   Max context: {max_model_len} tokens")
     print(f"   Autoscaling: Scale to zero enabled (5 min idle timeout)")
+    print(f"   Schema endpoint: http://<head-node-ip>:{serve_port}/{app_name}/v1/schema")
 
 
 def get_compute_report():
@@ -174,17 +179,75 @@ def main():
         help="Generate compute usage report after deployment",
     )
     
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Ray Serve HTTP port (default: 8000)",
+    )
+    parser.add_argument(
+        "--max-model-len",
+        type=int,
+        default=None,
+        help="Maximum model context length (default: auto-detected from model config)",
+    )
+    
     args = parser.parse_args()
     
-    # Get HF token from arg or environment
+    # Get HF token from argument or environment
     hf_token = args.hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
     
-    # Initialize Ray connection
+    # Use model name as model path if not specified
+    model_id = args.model
+    model_path = model_id
+    
+    # Initialize Ray connection - auto-detect head node IP
+    ray_address = args.address
+    if ray_address == "auto":
+        # Auto-detect head node IP and port
+        print("🔍 Auto-detecting Ray head node...")
+        try:
+            # Try to connect to auto first to get cluster info
+            ray.init(address="auto", ignore_reinit_error=True)
+            
+            # Get the head node IP from the cluster
+            nodes = ray.nodes()
+            head_node = None
+            for node in nodes:
+                # Head node has this resource
+                if node.get('Resources', {}).get('node:__internal_head__', 0) == 1.0:
+                    head_node = node
+                    break
+            
+            if head_node:
+                head_node_ip = head_node.get('NodeManagerAddress', '127.0.0.1')
+                ray_port = 6379  # Default Ray port
+                ray_address = f"{head_node_ip}:{ray_port}"
+                print(f"✅ Detected head node at {ray_address}")
+                # Shutdown the auto connection
+                ray.shutdown()
+            else:
+                # Fallback: use current node IP
+                import socket
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
+                ray_address = f"{local_ip}:6379"
+                print(f"⚠️  Could not detect head node, using local IP: {ray_address}")
+        except Exception as detect_err:
+            # Fallback: use localhost or detect from environment
+            import socket
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+            ray_address = f"{local_ip}:6379"
+            print(f"⚠️  Auto-detection failed ({detect_err}), using local IP: {ray_address}")
+    
+    # Now connect to the detected/explicit address
     try:
-        ray.init(address=args.address, ignore_reinit_error=True)
-        print(f"✅ Connected to Ray cluster")
+        ray.init(address=ray_address, ignore_reinit_error=True)
+        print(f"✅ Connected to Ray cluster at {ray_address}")
     except Exception as e:
-        print(f"❌ Failed to connect to Ray cluster: {e}")
+        print(f"❌ Failed to connect to Ray cluster at {ray_address}: {e}")
+        print(f"   Make sure Ray is running and the address is correct")
         sys.exit(1)
     
     # Check for vLLM
@@ -196,45 +259,115 @@ def main():
         print("⚠️  vLLM not found.")
         print("   Note: vLLM will be installed automatically on worker nodes via runtime_env")
     
-    # Ray Serve should already be running on the cluster
-    # Just connect and deploy (no need to start/restart Serve)
-    RAY_SERVE_PORT = 8000  # Default Ray Serve port
+    # Check for HF token (may be required for gated models)
+    if hf_token:
+        print("✅ HuggingFace token found (required for gated models)")
+        print(f"   Token length: {len(hf_token)} characters")
+    else:
+        print("⚠️  No HuggingFace token found - may be required for gated models")
+        print("   Set HF_TOKEN environment variable or use --hf-token argument")
+    
+    # Start Ray Serve with HTTP options to listen on all interfaces (0.0.0.0)
+    # IMPORTANT: We only start Ray Serve if it's not running, and we never shutdown
+    # existing deployments. Each app is deployed independently.
+    RAY_SERVE_PORT = args.port
+    RAY_SERVE_HOST = "0.0.0.0"  # Listen on all interfaces
+    
+    try:
+        from ray.serve.config import HTTPOptions
+        
+        # Check if Ray Serve is already running
+        try:
+            status = serve.status()
+            print(f"✅ Ray Serve is already running")
+            # Check if there are other applications
+            if hasattr(status, 'applications') and status.applications:
+                app_count = len(status.applications)
+                print(f"   Found {app_count} existing application(s) - will not affect them")
+            print(f"   HuggingFace LLM will be deployed alongside existing deployments")
+        except:
+            # Serve not running, start it
+            print(f"🚀 Starting Ray Serve on {RAY_SERVE_HOST}:{RAY_SERVE_PORT}...")
+            http_options = HTTPOptions(host=RAY_SERVE_HOST, port=RAY_SERVE_PORT)
+            try:
+                serve.start(detached=True, http_options=http_options)
+                print(f"✅ Ray Serve started on {RAY_SERVE_HOST}:{RAY_SERVE_PORT} (accessible from network)")
+            except Exception as start_err:
+                # Might already be starting or there's a port conflict
+                print(f"⚠️  Could not start Ray Serve: {start_err}")
+                print(f"   Attempting to continue - Ray Serve may already be running")
+                # Try to get status to confirm
+                try:
+                    time.sleep(1)
+                    status = serve.status()
+                    print(f"✅ Ray Serve is running")
+                except:
+                    print(f"⚠️  Ray Serve status unclear - deployment may fail")
+            
+    except Exception as e:
+        print(f"⚠️  Ray Serve setup issue: {e}")
+        print(f"   Attempting to continue anyway...")
+        import traceback
+        traceback.print_exc()
+    
+    # Get model config
+    config = get_model_config(args.model)
+    max_model_len = args.max_model_len or config["max_model_len"]
     
     # Deploy the endpoint
     try:
         deploy_start = time.time()
-        deploy_hf_llm(model_name=args.model, hf_token=hf_token, app_name=args.app_name)
+        deploy_hf_llm(
+            model_name=args.model,
+            model_path=model_path,
+            app_name=args.app_name,
+            serve_port=RAY_SERVE_PORT,
+            hf_token=hf_token,
+            max_model_len=max_model_len
+        )
         deploy_time = time.time() - deploy_start
         
         # Get head node IP for user
         try:
             head_node_ip = ray.util.get_node_ip_address()
-            app_name = args.app_name or f"hf-{args.model.replace('/', '-').replace('_', '-')}"
+            app_name = args.app_name or f"hf-{args.model.replace('/', '-').replace('_', '-').replace('.', '-')}"
             model_id = args.model.replace("/", "-")
-            config = get_model_config(args.model)
             
             print("\n📊 Deployment Summary:")
-            print(f"   Model: {args.model}")
+            print(f"   Model ID: {model_path}")
             print(f"   Application: {app_name}")
             print(f"   Endpoint: http://{head_node_ip}:{RAY_SERVE_PORT}/{app_name}/v1")
-            print(f"   Model name: {model_id}")
-            print(f"   Max context: {config['max_model_len']} tokens")
+            print(f"   Schema: http://{head_node_ip}:{RAY_SERVE_PORT}/{app_name}/v1/schema")
+            print(f"   Max context: {max_model_len} tokens")
             print(f"   Deployment time: {deploy_time:.2f}s")
             print(f"\n📝 Example usage:")
-            print(f"   curl http://{head_node_ip}:{RAY_SERVE_PORT}/{app_name}/v1/chat/completions \\")
+            print(f"   # Get schema (discover inputs):")
+            print(f"   curl http://{head_node_ip}:{RAY_SERVE_PORT}/{app_name}/v1/schema")
+            print(f"   # Chat completion:")
+            print(f"   curl -X POST http://{head_node_ip}:{RAY_SERVE_PORT}/{app_name}/v1/chat/completions \\")
             print(f"     -H 'Content-Type: application/json' \\")
-            print(f"     -d '{{\"model\": \"{model_id}\", \"messages\": [{{\"role\": \"user\", \"content\": \"Hello!\"}}]}}'")
+            print(f"     -d '{{\"model\": \"{model_id}\", \\")
+            print(f"           \"messages\": [{{\"role\": \"user\", \"content\": \"Hello! What is 2+2?\"}}], \\")
+            print(f"           \"max_tokens\": 100, \\")
+            print(f"           \"temperature\": 0.7}}'")
         except:
-            app_name = args.app_name or f"hf-{args.model.replace('/', '-').replace('_', '-')}"
+            app_name = args.app_name or f"hf-{args.model.replace('/', '-').replace('_', '-').replace('.', '-')}"
             model_id = args.model.replace("/", "-")
-            config = get_model_config(args.model)
             print("\n📊 Deployment Summary:")
-            print(f"   Model: {args.model}")
+            print(f"   Model ID: {model_path}")
             print(f"   Application: {app_name}")
             print(f"   Endpoint: http://<head-node-ip>:{RAY_SERVE_PORT}/{app_name}/v1")
-            print(f"   Model name: {model_id}")
-            print(f"   Max context: {config['max_model_len']} tokens")
+            print(f"   Schema: http://<head-node-ip>:{RAY_SERVE_PORT}/{app_name}/v1/schema")
+            print(f"   Max context: {max_model_len} tokens")
             print(f"   Deployment time: {deploy_time:.2f}s")
+            print(f"\n📝 Example usage:")
+            print(f"   # Get schema (discover inputs):")
+            print(f"   curl http://<head-node-ip>:{RAY_SERVE_PORT}/{app_name}/v1/schema")
+            print(f"   # Chat completion:")
+            print(f"   curl -X POST http://<head-node-ip>:{RAY_SERVE_PORT}/{app_name}/v1/chat/completions \\")
+            print(f"     -H 'Content-Type: application/json' \\")
+            print(f"     -d '{{\"model\": \"{model_id}\", \\")
+            print(f"           \"messages\": [{{\"role\": \"user\", \"content\": \"Hello!\"}}]}}'")
         
         print(f"\n💡 Note: Model will be downloaded from HuggingFace on first use")
         print(f"   This requires disk space and network access to huggingface.co")

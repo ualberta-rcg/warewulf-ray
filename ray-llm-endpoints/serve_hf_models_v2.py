@@ -1,147 +1,149 @@
 """
 Ray Serve deployment for HuggingFace LLM models using vLLM directly
-Version 2: Separate deployments per model with autoscaling
+Version 2: Separate deployments per model with autoscaling and dynamic input discovery
 """
 
 import os
+import sys
 import asyncio
 import time
 import psutil
 import threading
-from typing import Any
+import inspect
+from typing import Any, Dict
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from ray import serve
 
-# Try to import vLLM
-try:
-    from vllm import LLM, SamplingParams
-    VLLM_AVAILABLE = True
-except ImportError:
-    VLLM_AVAILABLE = False
-    print("⚠️  vLLM not available. Install with: pip install vllm>=0.10.1")
+# Note: We don't import vllm at module level to avoid library registration conflicts
+# All imports happen inside the replica's __init__ method where they're needed
+# This prevents issues when Ray creates multiple replicas in the same process
 
 
-def create_deployment(model_name: str, max_model_len: int = 4096):
+def create_deployment(model_name: str, model_path: str, hf_token: str = None, max_model_len: int = 4096):
     """Create a deployment with unique name and autoscaling for a specific model"""
     
     # Create unique deployment name from model name
-    deployment_name = f"hf-llm-{model_name.replace('/', '-').replace('_', '-')}"
+    deployment_name = f"hf-llm-{model_name.replace('/', '-').replace('_', '-').replace('.', '-')}"
     
     @serve.deployment(
         name=deployment_name,
         autoscaling_config={
             "min_replicas": 0,  # Scale to zero
-            "max_replicas": 1,  # Max 1 replica per model
-            "target_num_ongoing_requests_per_replica": 1,  # Scale up when 1 request is queued
-            "initial_replicas": 0,  # Start with 0 replicas
-            "downscale_delay_s": 300,  # Wait 5 minutes before scaling down to zero
-            "upscale_delay_s": 0,  # Scale up immediately when request arrives
+            "max_replicas": 2,  # Max 2 replicas per model
+            "target_num_ongoing_requests_per_replica": 1,
+            "initial_replicas": 0,
+            "downscale_delay_s": 300,  # Wait 5 minutes before scaling down
+            "upscale_delay_s": 0,  # Scale up immediately
+            "max_queued_requests": 0,  # Don't queue - return immediately when scaling up
         },
-        # No max_queued_requests limit - allow FIFO queuing while scaling
         ray_actor_options={
-            "num_gpus": 1,  # Adjust based on your GPU setup
+            "num_gpus": 1,
             "runtime_env": {
                 "pip": [
+                    # CRITICAL: packaging MUST be first - Ray's verification needs it immediately
+                    "packaging>=21.0",  # Required by Ray for runtime env verification - install FIRST
+                    # Core build dependencies (needed for package installation)
+                    "setuptools>=65.0",  # Required for building packages
+                    "wheel>=0.38.0",  # Required for building packages
+                    # Install Ray in venv to match system version (needed for verification)
+                    "ray[serve]>=2.49.0",  # Match system Ray version for venv compatibility
+                    # ML/AI framework dependencies
                     "vllm>=0.10.1",
-                    "openai>=1.0.0",
-                    "transformers>=4.30.0",
                     "torch>=2.0.0",
+                    "transformers>=4.30.0",
+                    "accelerate>=0.20.0",
+                    # OpenAI API compatibility
+                    "openai>=1.0.0",
+                    # Web framework
+                    "fastapi>=0.100.0",
+                    "starlette>=0.27.0",  # FastAPI dependency
+                    "uvicorn>=0.23.0",  # ASGI server
+                    # System utilities
                     "psutil>=5.9.0",
-                    "nvidia-ml-py>=12.0.0"  # For GPU utilization metrics
+                    "nvidia-ml-py>=12.0.0",  # GPU monitoring
                 ],
                 "env_vars": {
-                    "HF_TOKEN": os.environ.get("HF_TOKEN", ""),  # Pass HF token via env
+                    "HF_HOME": "/data/models",
                     "VLLM_USE_MODELSCOPE": "False",
+                    # Token will be passed as parameter and set in worker's __init__
                 }
             }
         }
     )
     class HuggingFaceLLMEndpoint:
-        """HuggingFace LLM endpoint using vLLM directly with autoscaling"""
+        """HuggingFace LLM endpoint using vLLM directly with autoscaling and dynamic input discovery"""
         
-        def __init__(self, model_name: str = model_name, hf_token: str = None, max_model_len: int = max_model_len):
-            import sys
-            import subprocess
-            
-            # Mark as not loaded initially (for scale-to-zero handling)
+        def __init__(self, model_name: str = model_name, model_path: str = model_path, hf_token: str = None, max_model_len: int = max_model_len):
             self.model_loaded = False
-            
-            # Check if vLLM is available, if not try to install it
-            # Initialize variables to avoid UnboundLocalError
-            vllm_llm = None
-            vllm_sampling_params = None
-            
-            if VLLM_AVAILABLE:
-                # vLLM is already available
-                vllm_llm = LLM
-                vllm_sampling_params = SamplingParams
-            else:
-                print("⚠️  vLLM not available. Attempting to install...")
-                try:
-                    # Try to install vllm using the Ray Python
-                    ray_python = "/opt/ray/bin/python"
-                    if os.path.exists(ray_python):
-                        print("   Installing vllm...")
-                        print("   ⏳ This can take 10-20+ minutes (downloading and compiling)")
-                        print("   💡 Tip: Install manually on worker nodes to speed up:")
-                        print("      /opt/ray/bin/pip install vllm>=0.10.1")
-                        # Don't capture output so user can see pip progress
-                        result = subprocess.run(
-                            [ray_python, "-m", "pip", "install", "--upgrade", "vllm>=0.10.1"],
-                            timeout=1200  # 20 minute timeout (vllm can take a while)
-                        )
-                        if result.returncode != 0:
-                            raise RuntimeError(f"pip install failed with return code {result.returncode}")
-                        
-                        # Reload vllm module
-                        import importlib
-                        if 'vllm' in sys.modules:
-                            del sys.modules['vllm']
-                        from vllm import LLM, SamplingParams
-                        vllm_llm = LLM
-                        vllm_sampling_params = SamplingParams
-                        print("✅ vLLM installed successfully")
-                    else:
-                        raise ImportError("vLLM not available and cannot install (Ray Python not found)")
-                except subprocess.TimeoutExpired:
-                    raise ImportError("vLLM installation timed out. Install manually with: /opt/ray/bin/pip install vllm>=0.10.1")
-                except Exception as e:
-                    print(f"❌ Failed to install vLLM: {e}")
-                    raise ImportError(f"vLLM not available and installation failed: {e}. Install with: /opt/ray/bin/pip install vllm>=0.10.1")
-            
-            # Verify vLLM is available
-            if vllm_llm is None or vllm_sampling_params is None:
-                raise ImportError("vLLM is not available. Installation may have failed.")
-            
-            # Store vLLM classes as instance variables
-            self.vllm_llm_class = vllm_llm
-            self.vllm_sampling_params_class = vllm_sampling_params
-            
+            self.llm = None  # vLLM LLM instance
             self.model_name = model_name
+            self.model_path = model_path or model_name
             self.max_model_len = max_model_len
-            # model_loaded is already set to False at the start of __init__
-            self.hf_token = hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-            self.llm = None  # Initialize as None - will be loaded in background
+            self.schema = None  # Will be populated after model loads
+            self.loading_error = None  # Store loading errors for API responses
+            self.loading_started = False  # Track if loading has started
             
-            # Set HuggingFace token if provided
+            # Get HF token from parameter, or fall back to environment
+            self.hf_token = hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            
+            # Set token in environment for vLLM library
             if self.hf_token:
                 os.environ["HF_TOKEN"] = self.hf_token
                 os.environ["HUGGING_FACE_HUB_TOKEN"] = self.hf_token
+                print(f"✅ HuggingFace token configured (length: {len(self.hf_token)})")
+            else:
+                print("⚠️  No HuggingFace token found - may fail for gated models")
             
-            # Load model in background thread so __init__ returns quickly
-            # This allows handler to respond immediately with 202 while model loads
+            # Import vllm (it's in runtime_env, so should be available)
+            try:
+                from vllm import LLM, SamplingParams
+                self.vllm_llm_class = LLM
+                self.vllm_sampling_params_class = SamplingParams
+                print("✅ vLLM available")
+            except ImportError as import_err:
+                print(f"⚠️  vLLM not available: {import_err}")
+                print("   Attempting to install...")
+                try:
+                    # Use the replica's Python (from runtime_env venv)
+                    replica_python = sys.executable
+                    print(f"   Using Python: {replica_python}")
+                    import subprocess
+                    result = subprocess.run(
+                        [replica_python, "-m", "pip", "install", 
+                         "vllm>=0.10.1"],
+                        timeout=1200,  # 20 minute timeout
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode != 0:
+                        raise RuntimeError(f"pip install failed with return code {result.returncode}")
+                    
+                    # Import after installation
+                    from vllm import LLM, SamplingParams
+                    self.vllm_llm_class = LLM
+                    self.vllm_sampling_params_class = SamplingParams
+                    print("✅ Installed and imported vLLM")
+                except Exception as install_err:
+                    print(f"❌ Installation failed: {install_err}")
+                    raise ImportError(f"vLLM not available and installation failed: {install_err}")
+            
+            # Load model in background thread
             def load_model():
                 try:
+                    from vllm import LLM, SamplingParams
+                    
+                    self.loading_started = True
                     print(f"🚀 Loading model in background: {model_name}")
-                    print(f"   Max context length: {max_model_len}")
-                    # Configure vLLM with HuggingFace token if provided
-                    # enforce_eager=True disables torch.compile which requires Python dev headers
+                    print(f"   HuggingFace Model ID: {self.model_path}")
+                    print(f"   Max context length: {max_model_len} tokens")
+                    
+                    # Configure vLLM
                     llm_kwargs = {
-                        "model": model_name,
+                        "model": self.model_path,
                         "tensor_parallel_size": 1,  # Adjust for multi-GPU
-                        "max_model_len": max_model_len,  # Configurable per model
-                        "trust_remote_code": True,  # For models that need custom code
+                        "max_model_len": max_model_len,
+                        "trust_remote_code": True,
                         "download_dir": "/data/models",  # Cache models on NFS
                         "enforce_eager": True,  # Disable torch.compile (avoids Python.h requirement)
                     }
@@ -150,33 +152,117 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                     if self.hf_token:
                         llm_kwargs["token"] = self.hf_token
                     
-                    # Use the stored LLM class
+                    # Load model
+                    print(f"   Loading model from HuggingFace: {self.model_path}")
                     self.llm = self.vllm_llm_class(**llm_kwargs)
-                    self.model_loaded = True
+                    
+                    # Verify GPU usage
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            num_cuda_devices = torch.cuda.device_count()
+                            print(f"   ✅ CUDA available: {num_cuda_devices} device(s)")
+                            for i in range(num_cuda_devices):
+                                allocated = torch.cuda.memory_allocated(i) / 1024**3
+                                reserved = torch.cuda.memory_reserved(i) / 1024**3
+                                total = torch.cuda.get_device_properties(i).total_memory / 1024**3
+                                print(f"   GPU {i} ({torch.cuda.get_device_name(i)}):")
+                                print(f"      Memory allocated: {allocated:.2f} GB / {total:.2f} GB")
+                                print(f"      Memory reserved: {reserved:.2f} GB")
+                                print(f"      Memory free: {total - reserved:.2f} GB")
+                        else:
+                            print("   ⚠️  CUDA not available - model may be on CPU")
+                    except Exception as gpu_check_err:
+                        print(f"   ⚠️  Could not verify GPU: {gpu_check_err}")
+                    
+                    # Discover schema after model is loaded
+                    self.schema = self._discover_model_schema()
                     print(f"✅ Model loaded: {model_name}")
+                    print(f"   Discovered {len(self.schema.get('inputs', {}).get('required', []))} required inputs")
+                    print(f"   Discovered {len(self.schema.get('inputs', {}).get('optional', []))} optional inputs")
+                    
+                    self.model_loaded = True
+                    self.loading_error = None  # Clear any previous errors
+                    print(f"✅ Model successfully loaded: {model_name}")
                 except Exception as e:
-                    print(f"❌ Failed to load model: {e}")
+                    error_msg = str(e)
+                    print(f"❌ Failed to load model: {error_msg}")
                     import traceback
                     traceback.print_exc()
                     self.model_loaded = False
-                    print(f"   Make sure you have:")
-                    print(f"   1. Sufficient disk space (check: df -h)")
-                    print(f"   2. Network access to huggingface.co")
-                    if self.hf_token:
-                        print(f"   3. Valid HuggingFace token")
+                    self.loading_error = error_msg  # Store error for API responses
             
-            # Start loading in background thread (non-blocking)
             loading_thread = threading.Thread(target=load_model, daemon=True)
             loading_thread.start()
             print(f"⏳ Model loading started in background for: {model_name}")
-            print(f"   Handler will respond with 202 (poll) until model is ready")
+        
+        def _discover_model_schema(self) -> Dict[str, Any]:
+            """Dynamically discover the model's inputs and capabilities"""
+            if self.llm is None:
+                return {"error": "Model not loaded"}
+            
+            schema = {
+                "model_id": self.model_name,
+                "model_class": "vLLM",
+                "capabilities": ["text-generation", "chat-completion"],
+                "inputs": {
+                    "required": [],
+                    "optional": []
+                },
+                "defaults": {
+                    "max_tokens": 100,
+                    "temperature": 0.7,
+                    "stream": False,
+                }
+            }
+            
+            # OpenAI-compatible chat completion API
+            schema["inputs"]["required"] = ["messages"]
+            
+            # Optional: generation parameters
+            schema["inputs"]["optional"] = [
+                "max_tokens",
+                "temperature",
+                "top_p",
+                "top_k",
+                "stream",
+                "stop",
+                "presence_penalty",
+                "frequency_penalty",
+            ]
+            
+            return schema
         
         async def __call__(self, request: Request) -> Any:
-            """Handle OpenAI-compatible API requests"""
+            """Handle API requests"""
             path = request.url.path
             
+            # For generation endpoints, check readiness immediately before any processing
             if path.endswith("/chat/completions"):
+                # Quick readiness check - return immediately if not ready
+                if not (hasattr(self, 'model_loaded') and self.model_loaded and 
+                        hasattr(self, 'llm') and self.llm is not None):
+                    return JSONResponse(
+                        {
+                            "status": "scaling_up",
+                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60-120 seconds.",
+                            "model": getattr(self, 'model_name', 'unknown'),
+                            "estimated_ready_time_seconds": 120,
+                            "retry_after": 120,
+                            "poll_url": str(request.url),
+                            "action": "retry_later"
+                        },
+                        status_code=202,
+                        headers={
+                            "Retry-After": "120",
+                            "X-Status": "scaling-up",
+                            "X-Action": "retry-later",
+                            "Content-Type": "application/json"
+                        }
+                    )
                 return await self.handle_chat_completions(request)
+            elif path.endswith("/schema"):
+                return await self.handle_schema(request)
             elif path.endswith("/models"):
                 return await self.handle_models(request)
             elif path.endswith("/health"):
@@ -187,15 +273,44 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                     status_code=404
                 )
         
+        async def handle_schema(self, request: Request) -> JSONResponse:
+            """Return the model's input schema (discovered dynamically)"""
+            if not hasattr(self, 'llm') or self.llm is None:
+                response = {
+                    "error": "Model not loaded yet",
+                    "status": "scaling_up"
+                }
+                
+                # Include loading status
+                if hasattr(self, 'loading_started'):
+                    if self.loading_started:
+                        response["status"] = "loading"
+                    else:
+                        response["status"] = "initializing"
+                
+                # Include error if loading failed
+                if hasattr(self, 'loading_error') and self.loading_error:
+                    response["loading_error"] = self.loading_error
+                    response["error"] = f"Model loading failed: {self.loading_error}"
+                    response["status"] = "failed"
+                
+                return JSONResponse(response, status_code=503)
+            
+            if self.schema is None:
+                # Try to discover now
+                self.schema = self._discover_model_schema()
+            
+            return JSONResponse(self.schema)
+        
         async def handle_health(self, request: Request) -> JSONResponse:
-            """Health check endpoint - responds immediately even if model is loading"""
+            """Health check endpoint"""
             if not hasattr(self, 'model_loaded') or not self.model_loaded:
                 return JSONResponse({
                     "status": "scaling_up",
                     "model": self.model_name,
                     "message": "Model is currently loading. Please wait and retry.",
                     "ready": False
-                }, status_code=503)  # Service Unavailable
+                }, status_code=503)
             return JSONResponse({
                 "status": "healthy",
                 "model": self.model_name,
@@ -215,11 +330,9 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
             })
         
         async def handle_chat_completions(self, request: Request) -> Any:
-            """Handle chat completion requests with scale-to-zero polling (no queuing)"""
+            """Handle chat completion requests (OpenAI-compatible)"""
             try:
-                # IMMEDIATE check if model is ready (scale-to-zero handling)
-                # Check both the flag and the actual llm object
-                # This must happen BEFORE any model operations
+                # Check if model is ready
                 model_ready = (
                     hasattr(self, 'model_loaded') and 
                     self.model_loaded and 
@@ -228,29 +341,25 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
                 )
                 
                 if not model_ready:
-                    # Model is NOT ready - return poll response IMMEDIATELY
-                    # NO QUEUING - client must poll/retry later
-                    # This prevents request accumulation when scaled to zero
                     return JSONResponse(
                         {
                             "status": "scaling_up",
-                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60 seconds. Your request was not queued - please retry when ready.",
-                            "model": getattr(self, 'model_name', 'unknown'),
-                            "estimated_ready_time_seconds": 60,
-                            "retry_after": 60,
-                            "poll_url": str(request.url),  # Same URL to poll
-                            "action": "retry_later"  # Client should retry, not wait for queue
+                            "message": "The model is currently scaled to zero and is scaling up. Please poll this endpoint or retry in ~60-120 seconds.",
+                            "model": self.model_name,
+                            "estimated_ready_time_seconds": 120,
+                            "retry_after": 120,
+                            "poll_url": str(request.url),
+                            "action": "retry_later"
                         },
-                        status_code=202,  # Accepted - but no queuing, client must retry
+                        status_code=202,
                         headers={
-                            "Retry-After": "60",  # HTTP standard for retry timing
-                            "X-Status": "scaling-up",  # Custom header for status
-                            "X-Action": "retry-later",  # Client should retry, not wait
+                            "Retry-After": "120",
+                            "X-Status": "scaling-up",
+                            "X-Action": "retry-later",
                             "Content-Type": "application/json"
                         }
                     )
                 
-                # Start timing
                 query_start_time = time.time()
                 
                 data = await request.json()
@@ -477,7 +586,9 @@ def create_deployment(model_name: str, max_model_len: int = 4096):
     return HuggingFaceLLMEndpoint
 
 
-def create_app(model_name: str, hf_token: str = None, max_model_len: int = 4096):
+def create_app(model_name: str, model_path: str = None, hf_token: str = None, max_model_len: int = 4096):
     """Create a Ray Serve application for a specific model"""
-    deployment_class = create_deployment(model_name, max_model_len)
-    return deployment_class.bind(model_name=model_name, hf_token=hf_token, max_model_len=max_model_len)
+    if model_path is None:
+        model_path = model_name
+    deployment_class = create_deployment(model_name, model_path, hf_token=hf_token, max_model_len=max_model_len)
+    return deployment_class.bind(model_name=model_name, model_path=model_path, hf_token=hf_token, max_model_len=max_model_len)
