@@ -31,10 +31,10 @@ def create_deployment(model_name: str, model_path: str):
     @serve.deployment(
         name=deployment_name,
         autoscaling_config={
-            "min_replicas": 0,  # Scale to zero
+            "min_replicas": 1,  # Keep at least 1 replica in memory
             "max_replicas": 5,  # Max 5 replicas per model
             "target_num_ongoing_requests_per_replica": 1,
-            "initial_replicas": 0,
+            "initial_replicas": 1,  # Start with 1 replica
             "downscale_delay_s": 300,  # Wait 5 minutes before scaling down
             "upscale_delay_s": 0,  # Scale up immediately
             "max_queued_requests": 0,  # Don't queue - return immediately when scaling up
