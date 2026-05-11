@@ -1,3 +1,5 @@
+<img src="./assets/ua_logo_green_rgb.png" alt="University of Alberta Logo" width="50%" />
+
 # warewulf-ray
 
 A Warewulf-compatible container image for deploying Ray with NVIDIA Triton Inference Server support on HPC clusters. This image is designed for the Digital Research Alliance of Canada (DRAC) infrastructure and provides a complete environment for distributed machine learning inference workloads.
